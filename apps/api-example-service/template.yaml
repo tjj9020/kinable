@@ -1,0 +1,42 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: API Example Service for Kinable
+
+Globals:
+  Function:
+    Timeout: 10
+    MemorySize: 128
+    Runtime: nodejs18.x
+    Handler: app.lambdaHandler # Assuming output is dist/app.js
+    CodeUri: . # Points to the service root, SAM build will use compiled output from dist/
+    Environment:
+      Variables:
+        NODE_OPTIONS: --enable-source-maps
+
+Resources:
+  ExampleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: kinable-dev-example-function
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /example
+            Method: get
+    Metadata:
+      BuildMethod: esbuild # Using esbuild for faster builds
+      BuildProperties:
+        Format: cjs
+        Target: es2020
+        Sourcemap: true
+        EntryPoints:
+          - src/app.ts # Entry point for esbuild
+        Minify: false
+        OutExtension:
+          .js: .js # Ensure output is .js for CommonJS
+
+Outputs:
+  ExampleApi:
+    Description: "API Gateway endpoint URL for Example function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/example" 

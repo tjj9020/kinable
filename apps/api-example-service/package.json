@@ -1,0 +1,24 @@
+{
+  "name": "@kinable/api-example-service",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/app.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "sam-build": "sam build",
+    "lint": "eslint . --ext .ts",
+    "test": "jest",
+    "deploy": "sam deploy --guided --profile kinable-dev"
+  },
+  "dependencies": {
+    "@kinable/common-types": "file:../../packages/common-types"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.0",
+    "@types/node": "^18.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0",
+    "aws-sam-webpack-plugin": "^0.11.0", 
+    "esbuild": "^0.18.0" 
+  }
+} 

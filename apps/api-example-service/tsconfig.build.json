@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "declaration": true,
+    "declarationMap": true,
+    "composite": true
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests",
+    ".aws-sam",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ],
+  "references": [
+    { "path": "../../packages/common-types" }
+  ]
+} 

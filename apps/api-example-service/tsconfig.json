@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "composite": true,
+    "disableSourceOfProjectReferenceRedirect": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests", ".aws-sam"],
+  "references": [
+    { "path": "../../packages/common-types" }
+  ]
+} 

@@ -235,13 +235,16 @@
 
 ---
 
-### **Phase 4: Basic Parent Dashboard (Read-Only) with Frontend & API**
+### **Phase 4: Parent Dashboard & Initial Child Interface**
+
+*   **Goal**: Provide a web interface for parents to manage their family account and for children to interact with the AI.
 
 *   **Step 4.1: Setup React App for Parent Dashboard**
-    *   **Goal**: Initialize a basic React application.
+    *   **Goal**: Initialize a basic React application for the parent-facing dashboard.
     *   **Tasks**:
         *   Create `apps/parent-dashboard/`. Scaffold React project (Vite/CRA with TypeScript).
         *   Setup basic routing. Configure build/lint/test scripts.
+    *   **Multi-Region Consideration**: Client-side configuration for API endpoints (if not using a global router) should be region-aware. Cognito integration must support regional user pools.
     *   **Definition of Done**: Basic React app runs locally, with build/test setup.
     *   **Commit Point**: After initial React app setup.
 
@@ -254,22 +257,127 @@
         *   `GetFamilyProfilesFunction` handler (`src/handlers/dashboard/getProfiles.ts`):
             *   Extract `familyId`, `role` from authorizer context.
             *   If `role` not `guardian`, return 403.
-            *   Use `IDatabaseProvider` to query `ProfilesTable` by `familyId`.
+            *   Use `IDatabaseProvider` to query `ProfilesTable` by `familyId` (using region-aware key if implemented).
             *   Return profiles.
         *   Unit test handler, mocking `IDatabaseProvider`.
         *   Grant `GetFamilyProfilesFunction` read access to `ProfilesTable`.
+    *   **Multi-Region Consideration**: API endpoints are inherently regional. Ensure any direct interaction with `IDatabaseProvider` respects regional data isolation.
     *   **Definition of Done**: Guardian can get profiles via API. Child gets 403. Unit tests pass.
     *   **Commit Point**: After dashboard API endpoint implementation and testing.
 
 *   **Step 4.3: Frontend Integration for Profile Listing**
     *   **Goal**: Dashboard React app fetches and displays profiles.
     *   **Tasks**:
-        *   Implement Cognito login in React app (e.g., AWS Amplify UI or `amazon-cognito-identity-js`).
+        *   Implement Cognito login in React app (e.g., AWS Amplify UI or `amazon-cognito-identity-js`), ensuring it's configured for the regional Cognito User Pool.
         *   Create a service/hook in React to call `/dashboard/profiles` with JWT.
         *   Display profiles in a component.
         *   Basic unit/integration tests for the React components.
     *   **Definition of Done**: Logged-in guardian sees family profiles in the React app.
     *   **Commit Point**: After frontend integration and display of profiles.
+
+*   **Step 4.4: Basic Child Chat Interface (MVP)**
+    *   **Goal**: Create a minimal, functional interface for a child to send prompts and receive AI responses, demonstrating the end-to-end chat flow.
+    *   **Tasks**:
+        *   Develop a simple client (e.g., a basic web component or a very streamlined Flutter view if resources allow) for child interaction.
+        *   Integrate with the `/chat` endpoint.
+        *   Display AI responses.
+        *   Ensure it respects authentication and authorization from Phase 1.
+    *   **Multi-Region Consideration**: Similar to Parent Dashboard: API endpoint configuration and Cognito integration should be region-aware.
+    *   **Definition of Done**: A child user can log in (via test credentials), send a prompt, and receive a moderated AI response. Basic token deduction is visible in `FamiliesTable`.
+    *   **Commit Point**: After basic child interface is functional and tested.
+
+---
+
+### **Phase 5: Enhanced Moderation & Content Adaptation**
+
+*   **Goal**: Make the moderation process more robust, configurable, and adaptable to different user needs.
+
+*   **Step 5.1: Moderation Engine with Step Functions**
+    *   **Goal**: Refactor the moderation logic to use AWS Step Functions for better workflow management, error handling, and observability.
+    *   **Tasks**:
+        *   Define a Step Function state machine that orchestrates pre-prompt checks, AI model call, and post-response checks.
+        *   Integrate existing `IModerationProvider` implementations as tasks within the Step Function.
+        *   Update `ChatRouterFunction` to invoke this Step Function workflow instead of direct Lambda calls for moderation.
+    *   **Multi-Region Consideration**: Step Function definition should be deployable per region. Interactions with other regional services (Lambdas, `ModerationLogTable`) must be region-contained. Use region-aware naming for the Step Function.
+    *   **Definition of Done**: Moderation flow is managed by Step Functions. Existing moderation capabilities are preserved. Unit tests for Step Function integration pass.
+    *   **Commit Point**: After Step Function based moderation engine is implemented and tested.
+
+*   **Step 5.2: Readability Rewriter Service**
+    *   **Goal**: Implement a service to adjust the complexity and style of AI responses to be more age-appropriate.
+    *   **Tasks**:
+        *   Define `IReadabilityProvider` interface and its implementation (e.g., using another LLM call to simplify text via `IAIModelProvider`).
+        *   Integrate the `ReadabilityRewriterService` as an optional step in the Moderation Step Function.
+        *   Add controls in the Parent Dashboard for guardians to enable/configure readability settings per profile.
+    *   **Multi-Region Consideration**: `IAIModelProvider` used by the rewriter should be region-aware. Any data storage/logging specific to readability should be regional.
+    *   **Definition of Done**: AI responses can be automatically simplified based on profile settings. Parent dashboard controls are functional.
+    *   **Commit Point**: After Readability Rewriter is implemented and integrated.
+
+*   **Step 5.3: Advanced Moderation Rules & Enhanced Logging**
+    *   **Goal**: Implement the custom age-based rule engine and improve detail in moderation logging.
+    *   **Tasks**:
+        *   Develop the custom rule engine logic (as per `TECH_ROADMAP.md`).
+        *   Integrate this engine into the `IModerationProvider` or directly into the Step Function workflow.
+        *   Expand `ModerationLogTable` schema to include more detailed context about flagged content and applied rules (e.g., rule ID, matched content snippet).
+    *   **Multi-Region Consideration**: `ModerationLogTable` is already noted to be region-aware. Custom rules, if stored (e.g., in DynamoDB or config files), should be manageable per region.
+    *   **Definition of Done**: Custom moderation rules are active and integrated. Logs provide comprehensive audit trails for moderation events.
+    *   **Commit Point**: After advanced moderation rules and logging are implemented.
+
+---
+
+### **Phase 6: Advanced Permissions & User Notifications**
+
+*   **Goal**: Implement fine-grained access control and proactive user notifications.
+
+*   **Step 6.1: Cedar Verified Permissions (AVP) Integration**
+    *   **Goal**: Introduce Amazon Verified Permissions for managing complex authorization policies.
+    *   **Tasks**:
+        *   Define Cedar policies for key actions (e.g., accessing chat, viewing transcripts, modifying settings, admin functions).
+        *   Set up AVP Policy Store and link it to identity sources (Cognito).
+        *   Modify `LambdaAuthorizerFunction` (or create a dedicated policy evaluation service/Lambda) to make authorization decisions based on AVP.
+        *   (Future sub-task) Build UI components in Parent Dashboard for managing relevant policy aspects if applicable.
+    *   **Multi-Region Consideration**: Each region must use its own AVP policy store. Define all Cedar policies as code and deploy them per region. Use region-aware naming for Policy Stores.
+    *   **Definition of Done**: Access control for defined actions is governed by Cedar policies in AVP. Unit tests for policy enforcement pass.
+    *   **Commit Point**: After AVP integration and initial policy setup.
+
+*   **Step 6.2: Notification System (SNS/SES)**
+    *   **Goal**: Implement a system for notifying users of important events.
+    *   **Tasks**:
+        *   Set up SNS topics for different event types (e.g., token quota warnings, content moderation flags, major account changes).
+        *   Configure SES for sending email notifications, including verified sender identities and email templates.
+        *   Integrate event publishing into relevant services (e.g., `BillingLedgerFunction` for token warnings, `ModerationEngine` Step Function for flags).
+        *   Add notification preferences in the Parent Dashboard (e.g., opt-in/out for certain notification types).
+    *   **Multi-Region Consideration**: SNS Topics and SES configurations are regional. Notifications should be triggered and sent from the user's primary region. Manage templates per region if they have regional content.
+    *   **Definition of Done**: Users receive notifications for configured events based on their preferences.
+    *   **Commit Point**: After notification system is implemented and tested.
+
+---
+
+### **Phase 7: Full Billing & Real-time Chat Experience**
+
+*   **Goal**: Complete the Stripe billing integration and enhance the chat experience with real-time updates.
+
+*   **Step 7.1: Stripe Webhook Integration & Subscription Management**
+    *   **Goal**: Fully integrate Stripe for handling subscriptions, booster pack purchases, and billing events.
+    *   **Tasks**:
+        *   Implement Lambda handlers for critical Stripe webhooks (e.g., `checkout.session.completed`, `invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`).
+        *   Secure webhook endpoints using Stripe signature verification.
+        *   Update `FamiliesTable` (e.g., `tokenBalance`, `subscriptionStatus`) and potentially a new `BillingEventsTable` based on Stripe events.
+        *   Develop UI in Parent Dashboard for managing subscriptions (view, upgrade, cancel), viewing billing history, and purchasing booster packs.
+    *   **Multi-Region Consideration**: Stripe is global, but webhook Lambda handlers are regional. DB updates must target regional tables. `BillingEventsTable` (if created) needs region-aware naming and partitioning strategy. Ensure idempotency in webhook handlers.
+    *   **Definition of Done**: End-to-end Stripe billing flow is operational for subscriptions and booster packs. Parent dashboard provides billing management.
+    *   **Commit Point**: After full Stripe integration and dashboard UI.
+
+*   **Step 7.2: WebSocket API for Real-time Chat**
+    *   **Goal**: Implement WebSocket communication for a more interactive chat experience.
+    *   **Tasks**:
+        *   Define a WebSocket API in API Gateway.
+        *   Implement Lambda handlers for WebSocket lifecycle events (`$connect`, `$disconnect`, `$default`).
+        *   Implement logic for managing connections (e.g., store connection IDs in DynamoDB mapped to `profileId`).
+        *   Modify the `ChatService` (or its Step Function workflow) to broadcast messages to connected clients of a given profile/family after AI response and moderation.
+        *   Update client applications (Parent and Child) to establish WebSocket connections and send/receive chat messages via WebSockets.
+    *   **Multi-Region Consideration**: API Gateway WebSocket APIs are regional. Connection management (e.g., connection ID table) must be regional. Message broadcasting should occur within the user's region.
+    *   **Definition of Done**: Chat messages are delivered in real-time via WebSockets to appropriate clients. Connection handling is robust.
+    *   **Commit Point**: After WebSocket API and client integration.
 
 ---
 
@@ -295,6 +403,7 @@
     *   **Configuration:** Store region-specific configuration in environment variables or parameters, never hardcode.
     *   **API Gateway:** Use regional endpoints (not edge-optimized) to prepare for future multi-region routing.
     *   **CloudFormation Outputs:** Export all resource names/ARNs as outputs to simplify cross-referencing.
+    *   **Observability Strategy:** Ensure logs, metrics, and CloudWatch dashboards are designed to be region-specific by default, with cross-region aggregation considered a later enhancement.
 
 ---
 

@@ -57,6 +57,7 @@ export class CognitoAuthProvider implements IAuthProvider {
         role: getRoleClaim(payload, 'custom:role'),
         isAuthenticated: true,
         displayName: displayNameValue,
+        region: getStringClaim(payload, 'custom:region'),
       };
 
       if (!userIdentity.userId) {

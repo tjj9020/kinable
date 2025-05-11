@@ -53,6 +53,7 @@ describe('CognitoAuthProvider', () => {
       role: 'guardian',
       isAuthenticated: true,
       displayName: 'Test User',
+      region: null,
     };
 
     const result = await authProvider.verifyToken(mockToken);
@@ -102,12 +103,55 @@ describe('CognitoAuthProvider', () => {
       role: 'child',
       isAuthenticated: true,
       displayName: undefined,
+      region: null,
     };
 
     const result = await authProvider.verifyToken(mockToken);
     // Adjusting expectation for email based on getStringClaim returning null then coalesced to undefined
     expect(result).toEqual(expect.objectContaining(expectedIdentity)); 
     expect(result?.email).toBeUndefined();
+    expect(result?.region).toBeNull();
+  });
+
+  it('should correctly extract custom:region claim when present', async () => {
+    const mockToken = 'valid.jwt.token.with.region';
+    const mockRegion = 'us-west-2';
+    const mockPayload = {
+      sub: 'test-sub-region',
+      email: 'region@example.com',
+      'custom:familyId': 'famRegion',
+      'custom:profileId': 'profRegion',
+      'custom:role': 'guardian',
+      'custom:region': mockRegion,
+      name: 'Region User',
+    };
+    mockVerify.mockResolvedValue(mockPayload);
+
+    const expectedIdentity: IUserIdentity = {
+      userId: 'test-sub-region',
+      email: 'region@example.com',
+      familyId: 'famRegion',
+      profileId: 'profRegion',
+      role: 'guardian',
+      isAuthenticated: true,
+      displayName: 'Region User',
+      region: mockRegion,
+    };
+
+    const result = await authProvider.verifyToken(mockToken);
+    expect(result).toEqual(expectedIdentity);
+  });
+
+  it('should handle custom:region claim not being a string gracefully (as null)', async () => {
+    const mockToken = 'valid.jwt.token.invalid.region';
+    const mockPayload = {
+      sub: 'test-sub-invalid-region',
+      'custom:region': 123, // Invalid type for region
+    };
+    mockVerify.mockResolvedValue(mockPayload);
+
+    const result = await authProvider.verifyToken(mockToken);
+    expect(result?.region).toBeNull();
   });
 
 }); 

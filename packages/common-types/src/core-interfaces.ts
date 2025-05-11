@@ -7,6 +7,7 @@ export interface IUserIdentity {
   // Add other relevant claims that might come from the JWT or session
   displayName?: string;
   email?: string;
+  region?: string | null; // User's primary region
 }
 
 export interface IApiResponse<T = any> {

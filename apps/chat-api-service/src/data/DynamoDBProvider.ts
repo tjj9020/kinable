@@ -77,7 +77,7 @@ export class DynamoDBProvider implements IDatabaseProvider {
       UpdateExpression: updateExpression,
       ExpressionAttributeValues: expressionAttributeValues,
       ExpressionAttributeNames: expressionAttributeNames,
-      ReturnValues: 'UPDATED_NEW', // Returns all of the attributes of the item as they appear after the UpdateItem operation
+      ReturnValues: 'UPDATED_NEW' as const, // Returns all of the attributes of the item as they appear after the UpdateItem operation
     };
 
     try {

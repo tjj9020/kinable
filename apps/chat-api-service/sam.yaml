@@ -107,6 +107,10 @@ Resources:
           AttributeDataType: String
           Mutable: true
           Required: false
+        - Name: region
+          AttributeDataType: String
+          Mutable: true
+          Required: false
       AutoVerifiedAttributes: [email]
       UsernameAttributes: [email]
 
@@ -134,21 +138,26 @@ Resources:
       PreventUserExistenceErrors: ENABLED
       ReadAttributes:
         - email
-        - custom:familyId
-        - custom:profileId
-        - custom:role
-        - preferred_username
+        - email_verified
         - name
+        - preferred_username
+        - profile
         - picture
         - updated_at
-      WriteAttributes:
-        - email
         - custom:familyId
         - custom:profileId
         - custom:role
+        - custom:region
+      WriteAttributes:
+        - email
         - name
-        - picture
         - preferred_username
+        - profile
+        - picture
+        - custom:familyId
+        - custom:profileId
+        - custom:role
+        - custom:region
 
   LambdaAuthorizerFunctionRole:
     Type: AWS::IAM::Role

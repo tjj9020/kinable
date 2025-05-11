@@ -1,0 +1,9 @@
+version = 0.1
+[default.deploy.parameters]
+stack_name = "kinable-dev"
+resolve_s3 = true
+s3_prefix = "kinable-dev"
+region = "us-east-2"
+profile = "kinable-dev"
+capabilities = "CAPABILITY_IAM"
+image_repositories = []

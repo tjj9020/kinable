@@ -117,20 +117,26 @@
     *   **Commit Point**: After authorizer implementation, testing, and integration with API Gateway.
 
 *   **Step 1.3: Initial DynamoDB Tables & Data Access Interfaces [COMPLETED]**
-    *   **Goal**: Create DynamoDB tables for `Families` and `Profiles` via SAM, and define data access interfaces.
+    *   **Goal**: Create DynamoDB tables for `Families` and `Profiles` via SAM, define data access interfaces, and ensure tables are configured to support DynamoDB Global Table replication.
     *   **Tasks**:
         *   In `packages/kinable-types/` (or a dedicated data package), define:
-            *   `IDatabaseProvider` interface with methods like `getItem(tableName: string, key: object): Promise<object | null>`, `updateItem(...)`, etc.
+            *   `IDatabaseProvider` interface (as updated to accept `keyAttributeName`, `logicalId`, `userRegion`).
             *   Interfaces for `FamilyData` (`familyId`, `tokenBalance`, `pauseStatusFamily`) and `ProfileData` (`profileId`, `familyId`, `role`, `pauseStatusProfile`).
         *   Define two DynamoDB tables in `sam.yaml`: `FamiliesTable`, `ProfilesTable` with initial attributes.
-        *   Deploy SAM changes.
-        *   Create `DynamoDBProvider` implementation of `IDatabaseProvider` in `apps/chat-api-service/src/data/`. Unit test this with mocks for the AWS SDK.
-        *   Grant the Lambda Authorizer read access to these tables (GetItem).
-        *   Manually populate with dummy data corresponding to test Cognito users.
+            *   Enable DynamoDB Streams for both tables (`StreamSpecification` with `StreamViewType: NEW_AND_OLD_IMAGES`) as a prerequisite for Global Table configuration.
+            *   The primary region for initial deployment and writes will be `us-east-2`.
+        *   Deploy SAM changes (for the `us-east-2` region initially).
+        *   Create `DynamoDBProvider` implementation of `IDatabaseProvider` in `apps/chat-api-service/src/data/`.
+            *   The `DynamoDBProvider` constructor will accept the AWS SDK client region (e.g., the user's primary write region like `us-east-2`).
+            *   Methods like `getItem`, `putItem`, etc., will accept `keyAttributeName`, `logicalId`, and `userRegion` (the user's designated home region, e.g., `us-east-2` or `us-west-2`).
+            *   The provider will construct partition key *values* by embedding the `userRegion` directly into the key string (e.g., `FAMILY#<userRegion>#<logicalId>` for `FamiliesTable`, `PROFILE#<userRegion>#<logicalId>` for `ProfilesTable`). This stamped key is what's stored in DynamoDB.
+            *   Writes will be directed to the regional endpoint configured in the provider's constructor (primary write region), and Global Tables will handle replication to other regions (e.g., `us-west-2`).
+        *   Unit test `DynamoDBProvider` with mocks for the AWS SDK, verifying regionalized key construction and usage.
+        *   Grant the Lambda Authorizer read access to these tables (GetItem) using their regional ARNs.
+        *   Manually populate with dummy data in `us-east-2`, ensuring primary key values use the new region-stamped format (e.g., `FAMILY#us-east-2#someId`).
+        *   Note: The actual linking of regional tables into a Global Table (e.g., `us-east-2` with `us-west-2`) may be a post-deployment configuration or a future IaC enhancement. This step focuses on ensuring the *table structure and access patterns* in `us-east-2` support global readiness.
     *   **Multi-Region Consideration**:
-        *   Use region-aware naming for tables (e.g., `KinableFamilies-${AWS::Region}-${AWS::StackName}`).
-        *   While table attribute names for keys might be simple (e.g., `familyId`), the *values* for these partition keys will be constructed by the `DynamoDBProvider` to incorporate region, such as `FAMILY#<user_region>#<actual_family_id>`. This supports the write-locality principle defined in Core Principle #6.
-        *   Ensure the `DynamoDBProvider` implementation accepts or can determine the user's region (e.g., from `IUserIdentity`) to correctly target data and construct/query these regionalized key values.
+        *   This step implements the foundational design for DynamoDB Global Tables. `FamiliesTable` and `ProfilesTable` are configured with streams and region-stamped partition keys (`ENTITY#<user_region>#<id_value>`) to support replication and unique identification across regions. The `DynamoDBProvider` ensures writes are directed to the user's primary regional endpoint (initially `us-east-2`) and data is stamped with its originating region.
     *   **Learnings**:
         *   When mocking AWS SDK v3 in Jest tests, using class-based mocks for command constructors (e.g., `GetCommand`, `PutCommand`) provides more reliable test behavior than trying to re-export from the original module.
         *   Setting test expectations with `expect.any(Object)` instead of specific command types provides more flexible test assertions.

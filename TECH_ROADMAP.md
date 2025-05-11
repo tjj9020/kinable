@@ -353,6 +353,34 @@ Other Services:
 - Notifications → SNS (email + mobile push)
 ```
 
+---
+
+***Multi-region Readiness UpFront***
+I want to achieve multi-region readiness with 1 click expansion down the road.  In order to do so we must enable global DynamoDB tables.  note that we will launch with us-east-2 as live and primary region
+| Table                                     | Why Make Global                                                                                                         | Notes                                                                        |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **User & Family Metadata Table**          | 🟢 *CRITICAL* — Needed to identify users, resolve region, and authorize access in a failover                            | PK: `FAMILY#<region>#<family_id>`                                            |
+| **Token Ledger Table**                    | 🟢 *CRITICAL* — Needed for continuity of usage quotas, billing, and alerts across regions                               | PK: `CHILD#<region>#<child_id>` + SK: `YYYY-MM-DD`                           |
+| **Policy Configuration Table**            | 🟡 *Recommended* — So parents’ safety settings follow them during failover                                              | Only parent-writable; append-only version history helps reduce conflict risk |
+| **Conversation Table (Short-Term)**       | 🟡 *Optional* — Replicate only the *last 10–20 messages* per thread for continuity. Full replication may be too costly. | If replicated, keep item size <500B; skip if you archive to S3               |
+| **Family Knowledge Base (Shared Memory)** | 🟢 *Strongly Recommended* — Families expect their shared flashcards, notes, etc., to survive failover                   | Naturally append-only; low write volume; ideal for Global Tables             |
+
+DO NOT USE GLOBAL TABLES FOR:
+| Table                           | Why Not Global                                              | Alternative                                   |
+| ------------------------------- | ----------------------------------------------------------- | --------------------------------------------- |
+| **Moderation Event Logs**       | ❌ High volume + not needed cross-region                     | Store in S3 with cross-region replication     |
+| **Audit/Token History Archive** | ❌ Write-heavy + immutable → S3 is cheaper and better suited | Archive periodically from DynamoDB or Kinesis |
+| **Analytics / Aggregates**      | ❌ Calculated state should not be replicated                 | Use Athena or Redshift Spectrum from S3 logs  |
+
+Design Considerations
+| Best Practice                                        | Reason                                                     |
+| ---------------------------------------------------- | ---------------------------------------------------------- |
+| Prefix all partition keys with `FAMILY#<region>#...` | Avoid cross-region collisions and make query routing clear |
+| Use *single-writer per region* strategy              | Prevent "last write wins" conflicts                        |
+| Keep **Global Table item sizes <400KB**              | Ensures faster replication and fewer retries               |
+| Avoid transactional writes spanning regions          | Global Tables don’t support cross-region atomicity         |
+
+
 ### Legend:
 
 * **API Gateway** handles all traffic, enforcing auth via Cognito.
@@ -361,4 +389,4 @@ Other Services:
 * **Router** selects the cheapest, safest LLM provider per request.
 * **SNS/SES** send live alerts to the parent app for monitoring & control.
 
-Let me know if you'd like a printable PDF version or want a version focused only on the moderation or billing flow!
+

@@ -56,51 +56,74 @@ export type DatabaseKey = Record<string, string | number | boolean>;
 
 export interface IDatabaseProvider {
   /**
-   * Retrieves an item from the specified table by its key.
+   * Retrieves an item from the specified table by its constructed regional key.
    * @param tableName The name of the table.
-   * @param key The key of the item to retrieve.
+   * @param keyAttributeName The name of the primary key attribute (e.g., 'familyId', 'profileId').
+   * @param logicalId The logical ID of the item (e.g., the raw familyId or profileId value).
+   * @param userRegion The user's home region, used to construct the full regionalized key value.
    * @returns A Promise resolving to the item object if found, or null.
    */
-  getItem<T extends object>(tableName: string, key: DatabaseKey): Promise<T | null>;
+  getItem<T extends object>(
+    tableName: string,
+    keyAttributeName: string,
+    logicalId: string,
+    userRegion: string // Made mandatory for clarity for user-specific tables
+  ): Promise<T | null>;
 
   /**
    * Puts (creates or overwrites) an item in the specified table.
+   * The primary key value in the 'item' object will be transformed to its regionalized version.
    * @param tableName The name of the table.
-   * @param item The item object to put.
-   * @returns A Promise resolving to the put item, or null if the operation failed.
+   * @param item The item object to put. It should contain the logical ID for the keyAttributeName.
+   * @param keyAttributeName The name of the primary key attribute in the item (e.g., 'familyId', 'profileId').
+   * @param userRegion The user's home region, used to construct the full regionalized key value.
+   * @returns A Promise resolving to the put item (with regionalized key), or null if the operation failed.
    */
-  putItem<T extends object>(tableName: string, item: T): Promise<T | null>;
+  putItem<T extends object>(
+    tableName: string,
+    item: T, // Item contains logicalId, e.g., item['familyId'] = 'actualFamilyId'
+    keyAttributeName: string,
+    userRegion: string // Made mandatory
+  ): Promise<T | null>;
 
   /**
-   * Updates an existing item in the specified table.
-   * This is a simplified version; a more robust one would handle specific update expressions.
+   * Updates an existing item in the specified table by its constructed regional key.
    * @param tableName The name of the table.
-   *   @param key The key of the item to update.
+   * @param keyAttributeName The name of the primary key attribute.
+   * @param logicalId The logical ID of the item.
    * @param updates An object containing the attributes to update.
+   * @param userRegion The user's home region for key construction.
    * @returns A Promise resolving to the updated item attributes, or null if the operation failed.
    */
   updateItem<T extends object>(
     tableName: string,
-    key: DatabaseKey,
-    updates: Partial<T> // For now, let's keep it simple with partial updates
-                         // More complex scenarios would need UpdateExpression, ConditionExpression, etc.
-  ): Promise<Partial<T> | null>; // Returns the updated attributes as confirmed by DB
+    keyAttributeName: string,
+    logicalId: string,
+    updates: Partial<T>,
+    userRegion: string // Made mandatory
+  ): Promise<Partial<T> | null>;
 
   /**
-   * Deletes an item from the specified table by its key.
+   * Deletes an item from the specified table by its constructed regional key.
    * @param tableName The name of the table.
-   * @param key The key of the item to delete.
+   * @param keyAttributeName The name of the primary key attribute.
+   * @param logicalId The logical ID of the item.
+   * @param userRegion The user's home region for key construction.
    * @returns A Promise resolving to true if deletion was successful, false otherwise.
    */
-  deleteItem(tableName: string, key: DatabaseKey): Promise<boolean>;
+  deleteItem(
+    tableName: string,
+    keyAttributeName: string,
+    logicalId: string,
+    userRegion: string // Made mandatory
+  ): Promise<boolean>;
 
   /**
    * Queries a table or an index.
-   * This is a simplified query interface. Real-world scenarios might need more params
-   * for sort keys, filters, consistent reads, etc.
+   * Note: Key construction for queries, especially on GSIs, might need specific handling
+   * within queryParams or by the provider if regionalized keys are involved in the query conditions.
    * @param tableName The name of the table or index.
-   * @param queryParams Parameters for the query (e.g., key condition expressions, filter expressions).
-   *                    For now, this is a placeholder for a more structured query input.
+   * @param queryParams Parameters for the query.
    * @returns A Promise resolving to an array of items.
    */
   query<T extends object>(

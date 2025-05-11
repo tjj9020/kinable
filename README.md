@@ -72,11 +72,90 @@ kinable/
 
 - **Languages:** TypeScript
 - **Package Management:** PNPM with workspaces
-- **Build System:** Turborepo
+- **Build System:** Turborepo (monorepo orchestration)
 - **Testing:** Jest
 - **Linting:** ESLint
 - **Cloud Infrastructure:** AWS SAM, CloudFormation
 - **AWS Services:** Lambda, API Gateway, Cognito, DynamoDB
+
+## Build System & Standardization
+
+### Turborepo for Repeatable Builds
+
+We use Turborepo to ensure consistent, repeatable builds across all packages. This monorepo orchestration tool provides:
+
+1. **Dependency-aware execution**:
+   - Tasks run in the correct order based on package dependencies
+   - Changes to shared packages automatically trigger rebuilds of dependent applications
+   
+2. **Intelligent caching**:
+   - Identical inputs produce identical outputs without rerunning
+   - Remote caching can be enabled for team-wide performance benefits
+   
+3. **Standardized pipelines**:
+   - All commands (`build`, `lint`, `test`, `dev`) are defined centrally in `turbo.json`
+   - Consistent behavior across packages, regardless of the underlying tools
+
+4. **Build artifacts management**:
+   - Output directories (`dist/`, `.aws-sam/build/`) are clearly specified
+   - Prevents accidental inclusion of temporary/build files in Git
+
+### How Our Build Pipeline Works
+
+```
+┌──────────────┐     ┌────────────────┐     ┌─────────────────┐
+│ pnpm install ├────►│ turbo build    ├────►│ sam build       │
+│              │     │ (all packages) │     │ (AWS packaging) │
+└──────────────┘     └────────────────┘     └─────────────────┘
+                           │
+                           ▼
+                     ┌────────────────┐
+                     │ turbo test     │
+                     │ (all packages) │
+                     └────────────────┘
+```
+
+1. **Initial Setup**: Install dependencies with PNPM workspaces
+   ```bash
+   pnpm install
+   ```
+
+2. **Build All Packages**: Compile TypeScript in the correct dependency order
+   ```bash
+   pnpm build  # runs turbo build
+   ```
+   - `common-types` builds first (no dependencies)
+   - Services build next, using the built common packages
+
+3. **Run Tests**: Test all packages after building
+   ```bash
+   pnpm test  # runs turbo test
+   ```
+
+4. **Deploy**: Build SAM application (already compiled by Turborepo)
+   ```bash
+   cd apps/chat-api-service
+   sam build -t sam.yaml
+   sam deploy -t sam.yaml --profile kinable-dev
+   ```
+
+### Enforcing Standards
+
+To maintain strict standards as the application grows:
+
+1. **Always use the standardized commands**:
+   - `pnpm build` instead of direct `tsc` calls
+   - `pnpm test` instead of direct `jest` calls
+   - Never bypass Turborepo, which enforces dependencies
+
+2. **Follow workspace conventions**:
+   - Keep dependencies in sync across packages
+   - Each package has its own `build` and `test` scripts
+   - Package names are consistently prefixed with `@kinable/`
+
+3. **Do not disable caching**:
+   - Avoid `--force` flags that bypass caching
+   - If builds need to be forced, use `turbo build --force`
 
 ## Setup
 
@@ -87,17 +166,17 @@ kinable/
 
 2. Build all packages:
    ```bash
-   pnpm build
+   pnpm build  # uses Turborepo to build all packages in the correct order
    ```
 
 3. Run tests:
    ```bash
-   pnpm test
+   pnpm test  # uses Turborepo to run tests for all packages
    ```
 
 4. Run linting:
    ```bash
-   pnpm lint
+   pnpm lint  # uses Turborepo to lint all packages
    ```
 
 ## Development

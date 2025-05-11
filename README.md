@@ -108,13 +108,60 @@ Refer to [PROJECT_PLAN.md](PROJECT_PLAN.md) for the detailed implementation plan
 
 ## Deployment
 
-For Lambda services, run the following from the service directory:
+### SAM Build and Deployment Workflow
 
-```bash
-cd apps/chat-api-service
-pnpm build                # Compile TypeScript
-sam build -t sam.yaml     # Build SAM package
-sam deploy -t sam.yaml --profile kinable-dev  # Deploy
-```
+Our serverless applications are built and deployed using AWS SAM (Serverless Application Model). Follow these steps for deployment:
 
-This will run the SAM deploy process with guided setup for the first deployment. Subsequent deployments can use the generated `samconfig.toml` file. 
+1. **Build the TypeScript code**:
+   ```bash
+   cd apps/chat-api-service
+   pnpm build
+   ```
+   This compiles TypeScript to JavaScript in the `dist/` directory, which SAM will package.
+
+2. **Build the SAM application**:
+   ```bash
+   sam build -t sam.yaml
+   ```
+   This command:
+   - Processes the SAM template (`sam.yaml`)
+   - Copies source code and dependencies
+   - Creates deployment artifacts in `.aws-sam/build/`
+
+3. **Deploy to AWS**:
+   ```bash
+   sam deploy -t sam.yaml --profile kinable-dev
+   ```
+   This command:
+   - Uses the AWS `kinable-dev` profile (defined in AWS SSO)
+   - Deploys resources to the AWS account (105784982857)
+   - Creates/updates CloudFormation stack
+   - Packages and uploads artifacts to S3
+   - Deploys Lambda functions, API Gateway, and other resources
+
+   For first-time deployments, use guided mode:
+   ```bash
+   sam deploy -t sam.yaml --guided --profile kinable-dev
+   ```
+   This will walk you through configuration options and save them to `samconfig.toml`.
+
+4. **Verify deployment**:
+   ```bash
+   aws cloudformation describe-stacks --stack-name chat-api-service --profile kinable-dev
+   ```
+   Or check the CloudFormation console in the AWS Management Console.
+
+### Troubleshooting Deployments
+
+- If your SSO token expires, refresh it with:
+  ```bash
+  aws sso login --profile kinable-dev
+  ```
+
+- For stack deployment failures, check CloudFormation in the AWS Console:
+  - Look for stacks in `ROLLBACK_FAILED` or `UPDATE_ROLLBACK_FAILED` states
+  - You may need to manually delete failed stacks before redeploying
+
+- Verify Lambda functions have correct IAM permissions via their execution roles
+
+- For API Gateway issues, check the API endpoint configuration and authorizer settings 

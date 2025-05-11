@@ -52,12 +52,12 @@ export class CognitoAuthProvider implements IAuthProvider {
       const userIdentity: IUserIdentity = {
         userId: payload.sub || (payload as CognitoAccessTokenPayload).username || '',
         email: getStringClaim(payload, 'email') || undefined,
-        familyId: getStringClaim(payload, 'custom:familyId'),
-        profileId: getStringClaim(payload, 'custom:profileId'),
-        role: getRoleClaim(payload, 'custom:role'),
+        familyId: getStringClaim(payload, 'custom:custom:familyId'),
+        profileId: getStringClaim(payload, 'custom:custom:profileId'),
+        role: getRoleClaim(payload, 'custom:custom:role'),
         isAuthenticated: true,
         displayName: displayNameValue,
-        region: getStringClaim(payload, 'custom:region'),
+        region: getStringClaim(payload, 'custom:custom:region'),
       };
 
       if (!userIdentity.userId) {

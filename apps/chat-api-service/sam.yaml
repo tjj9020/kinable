@@ -21,6 +21,7 @@ Resources:
       CorsConfiguration:
         AllowOrigins:
           - 'http://localhost:8080'
+          - 'http://localhost:8000'
         AllowHeaders:
           - Authorization
           - Content-Type
@@ -95,19 +96,19 @@ Resources:
           AttributeDataType: String
           Mutable: true
           Required: true
-        - Name: familyId
+        - Name: custom:familyId
           AttributeDataType: String
           Mutable: true
           Required: false
-        - Name: profileId
+        - Name: custom:profileId
           AttributeDataType: String
           Mutable: true
           Required: false
-        - Name: role
+        - Name: custom:role
           AttributeDataType: String
           Mutable: true
           Required: false
-        - Name: region
+        - Name: custom:region
           AttributeDataType: String
           Mutable: true
           Required: false
@@ -124,7 +125,6 @@ Resources:
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows: [code, implicit]
       AllowedOAuthScopes:
-        - phone
         - email
         - openid
         - profile
@@ -141,23 +141,11 @@ Resources:
         - email_verified
         - name
         - preferred_username
-        - profile
-        - picture
-        - updated_at
-        - custom:familyId
-        - custom:profileId
-        - custom:role
-        - custom:region
-      WriteAttributes:
-        - email
-        - name
-        - preferred_username
-        - profile
-        - picture
-        - custom:familyId
-        - custom:profileId
-        - custom:role
-        - custom:region
+        - custom:custom:familyId
+        - custom:custom:profileId
+        - custom:custom:role
+        - custom:custom:region
+      # WriteAttributes: []
 
   LambdaAuthorizerFunctionRole:
     Type: AWS::IAM::Role
@@ -201,7 +189,7 @@ Resources:
           PROFILES_TABLE_NAME: !Ref ProfilesTable
 
   FamiliesTable:
-    Type: AWS::DynamoDB::Table
+    Type: AWS::DynamoDB::GlobalTable
     Properties:
       TableName: !Sub "KinableFamilies-${AWS::StackName}"
       AttributeDefinitions:
@@ -211,14 +199,18 @@ Resources:
         - AttributeName: familyId
           KeyType: HASH
       BillingMode: PAY_PER_REQUEST
-      Tags:
-        - Key: Project
-          Value: Kinable
-        - Key: Environment
-          Value: Dev
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Replicas:
+        - Region: us-east-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+        - Region: us-west-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
 
   ProfilesTable:
-    Type: AWS::DynamoDB::Table
+    Type: AWS::DynamoDB::GlobalTable
     Properties:
       TableName: !Sub "KinableProfiles-${AWS::StackName}"
       AttributeDefinitions:
@@ -237,11 +229,15 @@ Resources:
           Projection:
             ProjectionType: ALL
       BillingMode: PAY_PER_REQUEST
-      Tags:
-        - Key: Project
-          Value: Kinable
-        - Key: Environment
-          Value: Dev
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Replicas:
+        - Region: us-east-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+        - Region: us-west-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
 
 Outputs:
   HelloWorldApi:

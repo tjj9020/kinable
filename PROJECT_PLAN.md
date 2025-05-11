@@ -7,9 +7,15 @@
     *   We define interfaces within our application (e.g., `IDatabaseProvider`, `IAuthProvider`, `IAIModelProvider`, `IModerationProvider`, `IBillingProvider`).
     *   Concrete implementations of these interfaces (e.g., `DynamoDBProvider`, `CognitoAuthProvider`, `OpenAIProvider`) will adapt the third-party services.
     *   This allows for easier testing (using mocks/stubs for interfaces) and flexibility in swapping out underlying services. Business logic will only interact with these defined interfaces.
+    *   Testing approach: When testing components that use these interfaces, we inject mock implementations that return predictable responses, allowing us to test business logic in isolation without dependencies on external services.
 
 2.  **SOLID Design Principles**:
     *   We adhere strictly to SOLID principles (Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion) in all code design and implementation.
+    *   Single Responsibility: Each class or module has only one reason to change (e.g., `CognitoAuthProvider` only handles Cognito-specific authentication logic).
+    *   Open/Closed: Code should be open for extension but closed for modification (we extend through new interface implementations rather than modifying existing ones).
+    *   Liskov Substitution: Objects should be replaceable with instances of their subtypes without altering program correctness (all implementations of interfaces must satisfy the interface contract).
+    *   Interface Segregation: No client should be forced to depend on methods it does not use (interfaces are focused and specific to their purpose).
+    *   Dependency Inversion: High-level modules depend on abstractions, not implementations (business logic depends on interface contracts, not specific implementations).
 
 2.a **Follow the typescript style guide**:
     * You adhere to the typescript style guide for code organization, naming conventions, etc.
@@ -73,16 +79,16 @@
     *   **Definition of Done**: Cognito User Pool and App Client are created via SAM. Test users exist.
     *   **Commit Point**: After Cognito resources are deployed and test users created.
 
-*   **Step 1.2: Develop Basic Lambda Authorizer with Interfaces**
+*   **Step 1.2: Develop Basic Lambda Authorizer with Interfaces [COMPLETED]**
     *   **Goal**: Create a Lambda Authorizer that validates Cognito JWTs and extracts custom claims, using an `IAuthProvider` interface.
     *   **Tasks**:
-        *   In `packages/kinable-types/` (or a dedicated auth package), define `IAuthProvider` interface (e.g., `verifyToken(token: string): Promise<IUserIdentity | null>`) and `IUserIdentity` (containing `userId`, `familyId`, `profileId`, `role`, `isValid`).
+        *   In `packages/common-types/` (or a dedicated auth package), define `IAuthProvider` interface (e.g., `verifyToken(token: string): Promise<IUserIdentity | null>`) and `IUserIdentity` (containing `userId`, `familyId`, `profileId`, `role`, `isAuthenticated`).
         *   Create a `CognitoAuthProvider` implementation of `IAuthProvider` in `apps/chat-api-service/src/auth/`. This class will handle JWT validation against Cognito. Unit test this class with mock JWTs.
         *   Create a new Lambda function (`LambdaAuthorizerFunction`) in `sam.yaml`.
         *   Write the authorizer handler (`src/authorizers/jwtAuthorizer.ts`):
             *   Instantiate `CognitoAuthProvider`.
             *   Use it to verify the token and extract claims.
-            *   Return an IAM policy. For now, if `IUserIdentity.isValid` is true, allow.
+            *   Return an IAM policy. For now, if `IUserIdentity.isAuthenticated` is true, allow.
         *   Unit test the authorizer handler, mocking `IAuthProvider`.
         *   Update the "Hello World" API Gateway endpoint (from Step 0.2) to use this Lambda Authorizer.
         *   Grant the authorizer Lambda appropriate permissions if it needs to fetch JWKS URI dynamically (prefer passing User Pool ID/Region as env vars).

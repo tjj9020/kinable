@@ -1,18 +1,29 @@
 import { APIGatewayRequestAuthorizerEventV2, APIGatewayAuthorizerResult, APIGatewayAuthorizerResultContext } from 'aws-lambda';
 import { CognitoAuthProvider } from '../auth/CognitoAuthProvider';
 // import type { IUserIdentity } from '@kinable/common-types'; // Removed as userIdentity type is inferred
+import { DynamoDBProvider } from '../data/DynamoDBProvider';
+import { FamilyData, ProfileData, IUserIdentity } from '@kinable/common-types'; // Added IUserIdentity back for clarity
 
 const userPoolId = process.env.COGNITO_USER_POOL_ID || '';
 const clientId = process.env.COGNITO_CLIENT_ID || '';
 const tokenUse = (process.env.TOKEN_USE === 'access' || process.env.TOKEN_USE === 'id') ? process.env.TOKEN_USE : 'id';
+const familiesTableName = process.env.FAMILIES_TABLE_NAME || '';
+const profilesTableName = process.env.PROFILES_TABLE_NAME || '';
+const awsRegion = process.env.AWS_REGION || '';
 
-// Initialize the provider outside the handler for reuse (if container stays warm)
+// Initialize providers outside the handler for reuse
 let authProvider: CognitoAuthProvider;
 if (userPoolId && clientId) {
   authProvider = new CognitoAuthProvider(userPoolId, clientId, tokenUse);
 } else {
   console.error('Cognito User Pool ID or Client ID not configured in environment variables.');
-  // Optionally, throw an error here to fail fast during Lambda initialization if critical
+}
+
+let dbProvider: DynamoDBProvider;
+if (awsRegion && familiesTableName && profilesTableName) { // Ensure necessary env vars for DB provider are present
+  dbProvider = new DynamoDBProvider(awsRegion);
+} else {
+  console.error('AWS Region or DynamoDB table names not configured in environment variables for DBProvider.');
 }
 
 export const handler = async (
@@ -23,7 +34,11 @@ export const handler = async (
   if (!authProvider) {
     console.error('AuthProvider not initialized due to missing configuration.');
     // Policy to deny access if auth provider isn't set up
-    return generatePolicy('undefined', 'Deny', event.routeArn, {}); 
+    return generatePolicy('undefined', 'Deny', event.routeArn, { message: 'AuthProvider not initialized'}); 
+  }
+  if (!dbProvider) {
+    console.error('DBProvider not initialized due to missing configuration.');
+    return generatePolicy('undefined', 'Deny', event.routeArn, { message: 'DBProvider not initialized' });
   }
 
   // API Gateway V2 HTTP APIs pass the token in identitySource, typically $request.header.Authorization
@@ -39,10 +54,63 @@ export const handler = async (
   const bearerToken = token.startsWith('Bearer ') ? token.substring(7) : token;
 
   try {
-    const userIdentity = await authProvider.verifyToken(bearerToken);
+    const userIdentity = await authProvider.verifyToken(bearerToken) as IUserIdentity | null;
 
     if (userIdentity && userIdentity.isAuthenticated) {
       // console.log('User authenticated:', userIdentity.userId);
+
+      // === Start DB Checks ===
+      if (!userIdentity.profileId || !userIdentity.familyId || !userIdentity.region) {
+        console.error('User identity from token is missing critical IDs or region.', userIdentity);
+        return generatePolicy(userIdentity.userId || 'unknown', 'Deny', event.routeArn, { message: 'Incomplete user identity for DB checks.' });
+      }
+
+      try {
+        const profile = await dbProvider.getItem<ProfileData>(
+          profilesTableName,
+          'profileId',
+          userIdentity.profileId,
+          userIdentity.region
+        );
+
+        if (!profile) {
+          console.log(`Profile not found for profileId: ${userIdentity.profileId} in region: ${userIdentity.region}`);
+          return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Profile not found.' });
+        }
+
+        if (profile.pauseStatusProfile) {
+          console.log(`Profile ${userIdentity.profileId} is paused.`);
+          return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Profile is paused.' });
+        }
+
+        const family = await dbProvider.getItem<FamilyData>(
+          familiesTableName,
+          'familyId',
+          userIdentity.familyId,
+          userIdentity.region
+        );
+
+        if (!family) {
+          console.log(`Family not found for familyId: ${userIdentity.familyId} in region: ${userIdentity.region}`);
+          return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Family not found.' });
+        }
+
+        if (family.pauseStatusFamily) {
+          console.log(`Family ${userIdentity.familyId} is paused.`);
+          return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Family is paused.' });
+        }
+
+        if (family.tokenBalance === undefined || family.tokenBalance === null || family.tokenBalance <= 0) {
+          console.log(`Family ${userIdentity.familyId} has insufficient token balance: ${family.tokenBalance}`);
+          return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Insufficient token balance.' });
+        }
+        // === End DB Checks ===
+
+      } catch (dbError) {
+        console.error('Error during database checks:', dbError);
+        return generatePolicy(userIdentity.userId || 'unknown', 'Deny', event.routeArn, { message: 'Error during database validation.' });
+      }
+      
       // Pass context to the backend Lambda. This is crucial.
       // The context object here will be available in the event.requestContext.authorizer.lambda object of the backend Lambda.
       return generatePolicy(userIdentity.userId, 'Allow', event.routeArn, userIdentity as unknown as APIGatewayAuthorizerResultContext);

@@ -61,7 +61,7 @@
 
 ### **Phase 1: Authentication & Authorization Core**
 
-*   **Step 1.1: Setup Amazon Cognito User Pool (via IaC)**
+*   **Step 1.1: Setup Amazon Cognito User Pool (via IaC) [COMPLETED]**
     *   **Goal**: Create a Cognito User Pool to manage family users (guardians and children) using SAM.
     *   **Tasks**:
         *   Define a Cognito User Pool via SAM template (`sam.yaml` in `apps/chat-api-service/`).

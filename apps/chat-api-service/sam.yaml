@@ -47,10 +47,99 @@ Resources:
             Path: /hello
             Method: get
 
+  KinableUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: KinableUserPool-dev
+      # Policies for password, etc. - keeping defaults for now, can be customized
+      # Policies:
+      #   PasswordPolicy:
+      #     MinimumLength: 8
+      #     RequireLowercase: true
+      #     RequireNumbers: true
+      #     RequireSymbols: false
+      #     RequireUppercase: true
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+        - Name: familyId # Custom attribute
+          AttributeDataType: String
+          Mutable: true # Or false if set once at creation and never changed
+          Required: false
+        - Name: profileId # Custom attribute
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+        - Name: role # Custom attribute (guardian, child)
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+      AutoVerifiedAttributes: [email] # Or phone_number, if you collect and verify it
+      # MfaConfiguration: OFF # Can be ON or OPTIONAL
+      # EmailConfiguration: # If you want Cognito to send emails for verification/invitations
+      #   EmailSendingAccount: COGNITO_DEFAULT # or DEVELOPER
+      #   # If DEVELOPER, specify SourceArn for SES
+      UsernameAttributes: [email] # Users will sign in with their email
+
+  KinableUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref KinableUserPool
+      ClientName: WebAppClient-dev
+      GenerateSecret: false # Recommended for public clients like web/mobile apps
+      SupportedIdentityProviders: [COGNITO] # If using 3rd party IdPs, add them here
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code, implicit] # For web apps; implicit for testing, code is more secure
+      AllowedOAuthScopes:
+        - phone
+        - email
+        - openid
+        - profile
+        # - aws.cognito.signin.user.admin # If client needs to perform admin actions
+      CallbackURLs: # URLs where users are redirected after sign-in
+        - http://localhost:3000/callback # For local development
+        # - https://your-production-app.com/callback
+      LogoutURLs:
+        - http://localhost:3000/logout
+        # - https://your-production-app.com/logout
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        # - ALLOW_CUSTOM_AUTH (if you implement custom auth flows)
+        # - ALLOW_USER_PASSWORD_AUTH (not recommended if SRP is available)
+      PreventUserExistenceErrors: ENABLED # Recommended
+      ReadAttributes:
+        - email
+        - custom:familyId # Prefixed with custom:
+        - custom:profileId # Prefixed with custom:
+        - custom:role # Prefixed with custom:
+        # Standard attributes
+        - preferred_username
+        - name
+        - picture
+        - updated_at
+      WriteAttributes:
+        - email
+        - custom:familyId # Prefixed with custom:
+        - custom:profileId # Prefixed with custom:
+        - custom:role # Prefixed with custom:
+        # Standard attributes
+        - name
+        - picture
+        - preferred_username
+
 Outputs:
   HelloWorldApi:
     Description: "API Gateway endpoint URL for Prod stage for Hello World function"
     Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/hello"
   HelloWorldFunctionArn:
     Description: "Hello World Lambda Function ARN"
-    Value: !GetAtt HelloWorldFunction.Arn 
+    Value: !GetAtt HelloWorldFunction.Arn
+  CognitoUserPoolId:
+    Description: "ID of the Kinable Cognito User Pool"
+    Value: !Ref KinableUserPool
+  CognitoUserPoolClientId:
+    Description: "ID of the Kinable Cognito User Pool Client"
+    Value: !Ref KinableUserPoolClient 

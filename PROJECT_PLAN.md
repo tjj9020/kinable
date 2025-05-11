@@ -34,6 +34,14 @@
         *   A defined sub-task within a "Step" of a "Phase" is functionally complete and tested.
     *   Commit messages should be clear and reference the specific Phase and Step (e.g., "Feat(Phase1.2): Implement JWT parsing in Lambda Authorizer").
 
+6.  **Multi-Region Readiness**:
+    *   While initially deploying to a single region, we design all resources to be multi-region ready from the start.
+    *   We follow region-aware naming conventions: `<env>-<region>-<service>-<purpose>`.
+    *   We parameterize all region-specific resource identifiers (no hardcoding).
+    *   DynamoDB partition keys incorporate region information (e.g., `PK = FAMILY#<region>#<familyId>`).
+    *   All authorization and data operations remain region-local.
+    *   Interfaces should be designed to accommodate region-specific implementations.
+
 ---
 
 ## Phased Implementation Plan
@@ -60,6 +68,9 @@
         *   Implement basic unit tests for the handler.
         *   Deploy using `sam build --profile kinable-dev` and `sam deploy --guided --profile kinable-dev`.
         *   Test the deployed API endpoint.
+    *   **Multi-Region Consideration**: 
+        *   Ensure resource naming follows region-aware convention (e.g., `KinableHttpApi-${AWS::Region}`).
+        *   Parameterize any region-specific configurations.
     *   **Definition of Done**: The "Hello World" Lambda is deployed, unit tests pass, and its API Gateway endpoint returns a successful response.
     *   **Commit Point**: After successful deployment and testing.
 
@@ -76,6 +87,10 @@
             *   Set up an App Client.
         *   Deploy the changes: `sam deploy --profile kinable-dev`.
         *   Manually create a test guardian user and a test child user in the Cognito console, populating the custom attributes for initial testing.
+    *   **Multi-Region Consideration**:
+        *   Follow region-aware naming for Cognito resources.
+        *   Export Cognito Pool ID and App Client ID as CloudFormation outputs for easy reference.
+        *   Add a `region` field to user attributes for future multi-region support.
     *   **Definition of Done**: Cognito User Pool and App Client are created via SAM. Test users exist.
     *   **Commit Point**: After Cognito resources are deployed and test users created.
 
@@ -106,6 +121,10 @@
         *   Create `DynamoDBProvider` implementation of `IDatabaseProvider` in `apps/chat-api-service/src/data/`. Unit test this with mocks for the AWS SDK.
         *   Grant the Lambda Authorizer read access to these tables (GetItem).
         *   Manually populate with dummy data corresponding to test Cognito users.
+    *   **Multi-Region Consideration**:
+        *   Use region-aware naming for tables (e.g., `KinableFamilies-${AWS::Region}-${AWS::StackName}`).
+        *   Design partition keys to incorporate region (prepare for `FAMILY#<region>#<familyId>` format).
+        *   Ensure the `DynamoDBProvider` implementation accepts region as a parameter.
     *   **Learnings**:
         *   When mocking AWS SDK v3 in Jest tests, using class-based mocks for command constructors (e.g., `GetCommand`, `PutCommand`) provides more reliable test behavior than trying to re-export from the original module.
         *   Setting test expectations with `expect.any(Object)` instead of specific command types provides more flexible test assertions.
@@ -146,6 +165,10 @@
             *   Return the response.
         *   Unit test the `ChatRouterFunction` handler, mocking `IAIModelProvider`.
         *   Create a new `/chat` POST endpoint in API Gateway, protected by `LambdaAuthorizerFunction`.
+    *   **Multi-Region Consideration**:
+        *   Design `IAIModelProvider` to support region-specific model routing.
+        *   Secrets Manager keys should follow region-aware naming pattern.
+        *   Prepare for region-specific model availability (some AI providers have regional restrictions).
     *   **Definition of Done**: `/chat` endpoint successfully returns an AI response via the interface-driven model provider. Unit tests pass. API key is secure.
     *   **Commit Point**: After chat router implementation, interface/provider development, and testing.
 
@@ -165,6 +188,9 @@
             *   Invoke `ModerationEngineFunction` (or directly use `IModerationProvider`) with the user's prompt.
             *   If moderation blocks, return an error.
         *   Update `ChatRouterFunction` unit tests.
+    *   **Multi-Region Consideration**:
+        *   Moderation logs should include region information.
+        *   Ensure `ModerationLogTable` follows region-aware naming and partition key design.
     *   **Definition of Done**: Prompts are moderated via interfaces. Flagged prompts are blocked and logged. Unit tests pass.
     *   **Commit Point**: After moderation implementation for prompts, testing.
 
@@ -200,6 +226,10 @@
             *   After successful AI response, invoke `BillingLedgerFunction` (or use its logic directly via providers).
             *   Handle insufficient token errors.
         *   Update `ChatRouterFunction` unit tests.
+    *   **Multi-Region Consideration**:
+        *   Token ledger entries must include region information.
+        *   Billing operations should be isolated to the user's region to prevent cross-region consistency issues.
+        *   `TokenLedgerTable` should follow region-aware naming and partition key strategy.
     *   **Definition of Done**: Tokens deducted and logged via interfaces. Insufficient token scenarios handled. Unit tests pass.
     *   **Commit Point**: After billing/ledger implementation and testing.
 
@@ -259,6 +289,12 @@
     *   Compiler errors like `noUnusedParameters` (TS6133) will fail the `tsc` build; address them by using the parameter or prefixing its name with an underscore (`_`).
 *   **Jest Configuration for TypeScript:**
     *   New TypeScript packages that include Jest tests require a local `jest.config.js` file (e.g., in the service's root directory) configured with the `ts-jest` preset to correctly process TypeScript test files.
+*   **Multi-Region Readiness:**
+    *   **Resource Naming:** Follow the pattern `<env>-<region>-<service>-<purpose>` for all resources. 
+    *   **DynamoDB Design:** Partition keys should incorporate region (e.g., `PK = FAMILY#<region>#<familyId>`).
+    *   **Configuration:** Store region-specific configuration in environment variables or parameters, never hardcode.
+    *   **API Gateway:** Use regional endpoints (not edge-optimized) to prepare for future multi-region routing.
+    *   **CloudFormation Outputs:** Export all resource names/ARNs as outputs to simplify cross-referencing.
 
 ---
 

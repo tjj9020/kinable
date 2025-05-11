@@ -18,4 +18,14 @@ export interface IApiResponse<T = any> {
     code?: string; // e.g., 'VALIDATION_ERROR', 'UNAUTHORIZED'
     details?: any;
   };
+}
+
+export interface IAuthProvider {
+  /**
+   * Verifies an authentication token and returns the user's identity.
+   * @param token The token string (e.g., JWT).
+   * @returns A Promise resolving to an IUserIdentity object if the token is valid,
+   *          or null (or throws an error) if validation fails.
+   */
+  verifyToken(token: string): Promise<IUserIdentity | null>;
 } 

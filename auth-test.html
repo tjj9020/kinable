@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cognito Authentication Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Cognito Authentication Test</h1>
+        
+        <div id="loginForm">
+            <div class="form-group">
+                <label for="username">Email:</label>
+                <input type="text" id="username" placeholder="Enter your email">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" placeholder="Enter your password">
+            </div>
+            
+            <button onclick="authenticate()">Sign In</button>
+        </div>
+        
+        <div id="results" class="hidden">
+            <h2>Authentication Results</h2>
+            
+            <h3>ID Token (for JWT Authorizer):</h3>
+            <pre id="idToken"></pre>
+            
+            <h3>Test API Endpoint:</h3>
+            <div>
+                <button onclick="testApi()">Test API with Token</button>
+                <pre id="apiResult"></pre>
+            </div>
+
+            <h3>Full Authentication Response:</h3>
+            <pre id="fullResponse"></pre>
+        </div>
+    </div>
+    
+    <!-- Include the Amazon Cognito Identity SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@5.2.10/dist/amazon-cognito-identity.min.js"></script>
+    
+    <script>
+        // Configuration
+        const userPoolId = 'us-east-2_bdkYVDzIQ';
+        const clientId = '2dv7defismd0m2mlg9s0vvofoe';
+        const apiEndpoint = 'https://u2xkxe75t1.execute-api.us-east-2.amazonaws.com/hello';
+        
+        let idToken = null;
+        
+        function authenticate() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (!username || !password) {
+                alert('Please enter both email and password');
+                return;
+            }
+            
+            const authenticationData = {
+                Username: username,
+                Password: password
+            };
+            
+            const authenticationDetails = new AmazonCognitoIdentity.AuthenticationDetails(authenticationData);
+            
+            const poolData = {
+                UserPoolId: userPoolId,
+                ClientId: clientId
+            };
+            
+            const userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+            
+            const userData = {
+                Username: username,
+                Pool: userPool
+            };
+            
+            const cognitoUser = new AmazonCognitoIdentity.CognitoUser(userData);
+            
+            cognitoUser.authenticateUser(authenticationDetails, {
+                onSuccess: function(result) {
+                    // Get the ID token
+                    idToken = result.getIdToken().getJwtToken();
+                    
+                    // Display results
+                    document.getElementById('idToken').textContent = idToken;
+                    document.getElementById('fullResponse').textContent = JSON.stringify(result, null, 2);
+                    document.getElementById('results').classList.remove('hidden');
+                    document.getElementById('loginForm').classList.add('hidden');
+                },
+                
+                onFailure: function(err) {
+                    alert('Authentication failed: ' + err.message || JSON.stringify(err));
+                    console.error(err);
+                },
+                
+                newPasswordRequired: function(userAttributes, requiredAttributes) {
+                    // Handle new password required
+                    alert('You need to set a new password. This demo does not support that flow.');
+                    console.log('User attributes:', userAttributes);
+                    console.log('Required attributes:', requiredAttributes);
+                }
+            });
+        }
+        
+        function testApi() {
+            if (!idToken) {
+                alert('You must authenticate first');
+                return;
+            }
+            
+            const apiResult = document.getElementById('apiResult');
+            apiResult.textContent = 'Loading...';
+            
+            fetch(apiEndpoint, {
+                method: 'GET',
+                headers: {
+                    'Authorization': 'Bearer ' + idToken
+                }
+            })
+            .then(response => {
+                return response.text().then(text => {
+                    return {
+                        status: response.status,
+                        statusText: response.statusText,
+                        body: text
+                    };
+                });
+            })
+            .then(data => {
+                let resultText = `Status: ${data.status} ${data.statusText}\n\nResponse Body:\n${data.body}`;
+                apiResult.textContent = resultText;
+            })
+            .catch(error => {
+                apiResult.textContent = 'Error: ' + error.message;
+                console.error('API test error:', error);
+            });
+        }
+    </script>
+</body>
+</html> 

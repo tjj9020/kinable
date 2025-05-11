@@ -9,12 +9,52 @@ Globals:
   Function:
     Timeout: 3
     MemorySize: 128
-    Runtime: nodejs18.x # Choose a Node.js runtime
+    Runtime: nodejs18.x
     Architectures:
       - x86_64
-    # Handler is now per-function or should be if we add more functions
 
 Resources:
+  # Define the HTTP API with authorizer configuration
+  KinableHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - 'http://localhost:8080'
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        MaxAge: 600
+      # Define auth configurations
+      Auth:
+        Authorizers:
+          JwtAuthorizer:
+            FunctionArn: !GetAtt LambdaAuthorizerFunction.Arn
+            FunctionInvokeRole: !GetAtt LambdaAuthorizerInvokeRole.Arn
+            Identity:
+              Headers:
+                - Authorization
+            AuthorizerPayloadFormatVersion: 2.0
+            EnableSimpleResponses: false # We're returning IAM policies, not simple bool
+
+  # IAM role for API Gateway to invoke the Lambda authorizer
+  LambdaAuthorizerInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+
   HelloWorldFunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -29,111 +69,119 @@ Resources:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      # If specific tags are causing issues, we can control them here or omit them
-      # Tags:
-      #   - Key: created-by
-      #     Value: sam-cli
 
   HelloWorldFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: . # Reference to the root of the chat-api-service package
-      Handler: dist/handlers/hello.handler # Explicitly define handler here
-      Role: !GetAtt HelloWorldFunctionRole.Arn # Use the explicitly defined role
+      CodeUri: . 
+      Handler: dist/handlers/hello.handler
+      Role: !GetAtt HelloWorldFunctionRole.Arn
       Events:
         HelloWorldEvent:
-          Type: HttpApi # Using HTTP API for simplicity and cost-effectiveness
+          Type: HttpApi
           Properties:
+            ApiId: !Ref KinableHttpApi
             Path: /hello
             Method: get
+            Auth:
+              Authorizer: JwtAuthorizer
 
   KinableUserPool:
     Type: AWS::Cognito::UserPool
     Properties:
       UserPoolName: KinableUserPool-dev
-      # Policies for password, etc. - keeping defaults for now, can be customized
-      # Policies:
-      #   PasswordPolicy:
-      #     MinimumLength: 8
-      #     RequireLowercase: true
-      #     RequireNumbers: true
-      #     RequireSymbols: false
-      #     RequireUppercase: true
       Schema:
         - Name: email
           AttributeDataType: String
           Mutable: true
           Required: true
-        - Name: familyId # Custom attribute
-          AttributeDataType: String
-          Mutable: true # Or false if set once at creation and never changed
-          Required: false
-        - Name: profileId # Custom attribute
+        - Name: familyId
           AttributeDataType: String
           Mutable: true
           Required: false
-        - Name: role # Custom attribute (guardian, child)
+        - Name: profileId
           AttributeDataType: String
           Mutable: true
           Required: false
-      AutoVerifiedAttributes: [email] # Or phone_number, if you collect and verify it
-      # MfaConfiguration: OFF # Can be ON or OPTIONAL
-      # EmailConfiguration: # If you want Cognito to send emails for verification/invitations
-      #   EmailSendingAccount: COGNITO_DEFAULT # or DEVELOPER
-      #   # If DEVELOPER, specify SourceArn for SES
-      UsernameAttributes: [email] # Users will sign in with their email
+        - Name: role
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
 
   KinableUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       UserPoolId: !Ref KinableUserPool
       ClientName: WebAppClient-dev
-      GenerateSecret: false # Recommended for public clients like web/mobile apps
-      SupportedIdentityProviders: [COGNITO] # If using 3rd party IdPs, add them here
+      GenerateSecret: false
+      SupportedIdentityProviders: [COGNITO]
       AllowedOAuthFlowsUserPoolClient: true
-      AllowedOAuthFlows: [code, implicit] # For web apps; implicit for testing, code is more secure
+      AllowedOAuthFlows: [code, implicit]
       AllowedOAuthScopes:
         - phone
         - email
         - openid
         - profile
-        # - aws.cognito.signin.user.admin # If client needs to perform admin actions
-      CallbackURLs: # URLs where users are redirected after sign-in
-        - http://localhost:3000/callback # For local development
-        # - https://your-production-app.com/callback
+      CallbackURLs:
+        - http://localhost:3000/callback
       LogoutURLs:
         - http://localhost:3000/logout
-        # - https://your-production-app.com/logout
       ExplicitAuthFlows:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
-        # - ALLOW_CUSTOM_AUTH (if you implement custom auth flows)
-        # - ALLOW_USER_PASSWORD_AUTH (not recommended if SRP is available)
-      PreventUserExistenceErrors: ENABLED # Recommended
+      PreventUserExistenceErrors: ENABLED
       ReadAttributes:
         - email
-        - custom:familyId # Prefixed with custom:
-        - custom:profileId # Prefixed with custom:
-        - custom:role # Prefixed with custom:
-        # Standard attributes
+        - custom:familyId
+        - custom:profileId
+        - custom:role
         - preferred_username
         - name
         - picture
         - updated_at
       WriteAttributes:
         - email
-        - custom:familyId # Prefixed with custom:
-        - custom:profileId # Prefixed with custom:
-        - custom:role # Prefixed with custom:
-        # Standard attributes
+        - custom:familyId
+        - custom:profileId
+        - custom:role
         - name
         - picture
         - preferred_username
 
+  LambdaAuthorizerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  LambdaAuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: dist/authorizers/jwtAuthorizer.handler
+      Runtime: nodejs18.x
+      Timeout: 5
+      Role: !GetAtt LambdaAuthorizerFunctionRole.Arn
+      Environment:
+        Variables:
+          COGNITO_USER_POOL_ID: !Ref KinableUserPool
+          COGNITO_CLIENT_ID: !Ref KinableUserPoolClient
+
 Outputs:
   HelloWorldApi:
     Description: "API Gateway endpoint URL for Prod stage for Hello World function"
-    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/hello"
+    Value: !Sub "https://${KinableHttpApi}.execute-api.${AWS::Region}.amazonaws.com/hello"
   HelloWorldFunctionArn:
     Description: "Hello World Lambda Function ARN"
     Value: !GetAtt HelloWorldFunction.Arn
@@ -142,4 +190,7 @@ Outputs:
     Value: !Ref KinableUserPool
   CognitoUserPoolClientId:
     Description: "ID of the Kinable Cognito User Pool Client"
-    Value: !Ref KinableUserPoolClient 
+    Value: !Ref KinableUserPoolClient
+  LambdaAuthorizerFunctionArn:
+    Description: "ARN for the Lambda Authorizer Function"
+    Value: !GetAtt LambdaAuthorizerFunction.Arn 

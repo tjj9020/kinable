@@ -38,9 +38,13 @@
     *   While initially deploying to a single region, we design all resources to be multi-region ready from the start.
     *   We follow region-aware naming conventions: `<env>-<region>-<service>-<purpose>`.
     *   We parameterize all region-specific resource identifiers (no hardcoding).
-    *   DynamoDB partition keys incorporate region information (e.g., `PK = FAMILY#<region>#<familyId>`).
-    *   All authorization and data operations remain region-local.
-    *   Interfaces should be designed to accommodate region-specific implementations.
+    *   **DynamoDB Design**:
+        *   Partition key *values* will be constructed to incorporate region information (e.g., `FAMILY#<user_region>#<familyId_value>`, `PROFILE#<user_region>#<profileId_value>`). The actual table attribute names for keys remain simple (e.g., `familyId`).
+        *   All data operations (reads and especially writes) adhere to **write-locality**: operations for a given user/family occur in their designated "home region" (derived from `custom:region` JWT claim). This prevents cross-region write conflicts and simplifies data consistency.
+        *   Our Infrastructure as Code (IaC) approach using SAM for table definitions ensures consistent schemas and keys across regions. This facilitates new region deployments and is a prerequisite for potential future use of DynamoDB Global Tables.
+        *   If considering DynamoDB Global Tables in the future, data types will be assessed for replication safety (e.g., eventually consistent chat logs vs. strongly consistent counters which require careful design for active-active replication).
+    *   All authorization and data operations remain region-local by default.
+    *   Interfaces should be designed to accommodate region-specific implementations or configurations.
 
 ---
 
@@ -125,8 +129,8 @@
         *   Manually populate with dummy data corresponding to test Cognito users.
     *   **Multi-Region Consideration**:
         *   Use region-aware naming for tables (e.g., `KinableFamilies-${AWS::Region}-${AWS::StackName}`).
-        *   Design partition keys to incorporate region (prepare for `FAMILY#<region>#<familyId>` format).
-        *   Ensure the `DynamoDBProvider` implementation accepts region as a parameter.
+        *   While table attribute names for keys might be simple (e.g., `familyId`), the *values* for these partition keys will be constructed by the `DynamoDBProvider` to incorporate region, such as `FAMILY#<user_region>#<actual_family_id>`. This supports the write-locality principle defined in Core Principle #6.
+        *   Ensure the `DynamoDBProvider` implementation accepts or can determine the user's region (e.g., from `IUserIdentity`) to correctly target data and construct/query these regionalized key values.
     *   **Learnings**:
         *   When mocking AWS SDK v3 in Jest tests, using class-based mocks for command constructors (e.g., `GetCommand`, `PutCommand`) provides more reliable test behavior than trying to re-export from the original module.
         *   Setting test expectations with `expect.any(Object)` instead of specific command types provides more flexible test assertions.
@@ -195,8 +199,8 @@
             *   If moderation blocks, return an error.
         *   Update `ChatRouterFunction` unit tests.
     *   **Multi-Region Consideration**:
-        *   Moderation logs should include region information.
-        *   Ensure `ModerationLogTable` follows region-aware naming and partition key design.
+        *   Moderation logs should include region information (e.g., as a separate attribute in the `ModerationLogTable`).
+        *   Ensure `ModerationLogTable` follows region-aware naming. Its partition key design and access patterns must adhere to the multi-region DynamoDB principles outlined in Core Principle #6 (e.g., regionalized key values, write-locality).
     *   **Definition of Done**: Prompts are moderated via interfaces. Flagged prompts are blocked and logged. Unit tests pass.
     *   **Commit Point**: After moderation implementation for prompts, testing.
 
@@ -233,9 +237,9 @@
             *   Handle insufficient token errors.
         *   Update `ChatRouterFunction` unit tests.
     *   **Multi-Region Consideration**:
-        *   Token ledger entries must include region information.
-        *   Billing operations should be isolated to the user's region to prevent cross-region consistency issues.
-        *   `TokenLedgerTable` should follow region-aware naming and partition key strategy.
+        *   Token ledger entries must include region information (e.g., as a separate attribute in the `TokenLedgerTable`).
+        *   Billing operations (token deduction on `FamiliesTable` and logging to `TokenLedgerTable`) must be strictly isolated to the user's designated home region to maintain data integrity, adhering to the multi-region DynamoDB principles in Core Principle #6 (regionalized key values, write-locality).
+        *   `TokenLedgerTable` should follow region-aware naming and its partition key strategy must align with Core Principle #6.
     *   **Definition of Done**: Tokens deducted and logged via interfaces. Insufficient token scenarios handled. Unit tests pass.
     *   **Commit Point**: After billing/ledger implementation and testing.
 

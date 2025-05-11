@@ -32,9 +32,9 @@
 
 ## Phased Implementation Plan
 
-### **Phase 0: Project Setup & AWS Foundation**
+### **Phase 0: Project Setup & AWS Foundation [COMPLETED]**
 
-*   **Step 0.1: Verify Monorepo and Tooling Setup**
+*   **Step 0.1: Verify Monorepo and Tooling Setup [COMPLETED]**
     *   **Goal**: Ensure the `kinable` monorepo is correctly configured with PNPM workspaces and Turborepo.
     *   **Tasks**:
         *   Review `README.md` for existing setup.
@@ -44,7 +44,7 @@
     *   **Definition of Done**: Core build/lint/test commands execute successfully. New service/package directories are created. Initial shared types/interfaces defined.
     *   **Commit Point**: After setup and initial package creation.
 
-*   **Step 0.2: AWS `kinable-dev` Profile & "Hello World" SAM Deployment**
+*   **Step 0.2: AWS `kinable-dev` Profile & "Hello World" SAM Deployment [COMPLETED]**
     *   **Goal**: Confirm AWS CLI access with the `kinable-dev` profile and successfully deploy a basic "Hello World" Lambda using AWS SAM.
     *   **Tasks**:
         *   Follow `NEW_PROJECT_GUIDE.md` to ensure `kinable-dev` AWS CLI profile is configured and working (`aws sts get-caller-identity --profile kinable-dev`).

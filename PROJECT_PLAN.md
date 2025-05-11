@@ -107,6 +107,8 @@
         *   Unit test the authorizer handler, mocking `IAuthProvider`.
         *   Update the "Hello World" API Gateway endpoint (from Step 0.2) to use this Lambda Authorizer.
         *   Grant the authorizer Lambda appropriate permissions if it needs to fetch JWKS URI dynamically (prefer passing User Pool ID/Region as env vars).
+    *   **Multi-Region Consideration**:
+        *   The `LambdaAuthorizerFunction` and its `CognitoAuthProvider` instance are inherently regional, operating against the Cognito User Pool deployed in the same region. Configuration (User Pool ID, Client ID) must be supplied via environment variables derived from regional stack outputs (CloudFormation `!Ref` or `!GetAtt`).
     *   **Definition of Done**: API Gateway endpoint is protected. Valid JWTs grant access; invalid/missing JWTs are denied. `IAuthProvider` and its implementation are unit tested. Authorizer handler is unit tested.
     *   **Commit Point**: After authorizer implementation, testing, and integration with API Gateway.
 
@@ -143,6 +145,10 @@
                 *   Deny access if `tokenBalance` is <= 0.
         *   Update unit tests for the authorizer handler, mocking `IAuthProvider` and `IDatabaseProvider`.
         *   Test by setting pause statuses/token balances in DynamoDB and verifying access control via API calls.
+    *   **Multi-Region Consideration**:
+        *   The `DynamoDBProvider` instance used within the authorizer must be configured for the Lambda's current operational region (e.g., via `process.env.AWS_REGION`).
+        *   When fetching data from `FamiliesTable` and `ProfilesTable`, keys must be constructed to include the region identifier if the partition key design incorporates it (e.g., `FAMILY#<region>#<familyId>`). The region for the key should be derived from the user's `custom:region` JWT claim. If the claim is unavailable, the authorizer may need to deny access or default to its own operational region based on clearly defined rules.
+        *   Ensure IAM permissions for the authorizer to DynamoDB tables correctly reference the regionally named tables (e.g., using `!Sub` with `${AWS::Region}` in ARNs).
     *   **Definition of Done**: Authorizer correctly denies access based on data fetched via `IDatabaseProvider`. Unit tests updated and pass.
     *   **Commit Point**: After authorizer enhancements and thorough testing.
 

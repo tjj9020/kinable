@@ -95,7 +95,7 @@
     *   **Definition of Done**: API Gateway endpoint is protected. Valid JWTs grant access; invalid/missing JWTs are denied. `IAuthProvider` and its implementation are unit tested. Authorizer handler is unit tested.
     *   **Commit Point**: After authorizer implementation, testing, and integration with API Gateway.
 
-*   **Step 1.3: Initial DynamoDB Tables & Data Access Interfaces**
+*   **Step 1.3: Initial DynamoDB Tables & Data Access Interfaces [COMPLETED]**
     *   **Goal**: Create DynamoDB tables for `Families` and `Profiles` via SAM, and define data access interfaces.
     *   **Tasks**:
         *   In `packages/kinable-types/` (or a dedicated data package), define:
@@ -106,6 +106,9 @@
         *   Create `DynamoDBProvider` implementation of `IDatabaseProvider` in `apps/chat-api-service/src/data/`. Unit test this with mocks for the AWS SDK.
         *   Grant the Lambda Authorizer read access to these tables (GetItem).
         *   Manually populate with dummy data corresponding to test Cognito users.
+    *   **Learnings**:
+        *   When mocking AWS SDK v3 in Jest tests, using class-based mocks for command constructors (e.g., `GetCommand`, `PutCommand`) provides more reliable test behavior than trying to re-export from the original module.
+        *   Setting test expectations with `expect.any(Object)` instead of specific command types provides more flexible test assertions.
     *   **Definition of Done**: Tables are created via SAM. `IDatabaseProvider` and its `DynamoDBProvider` implementation exist and are unit tested. Authorizer has IAM permissions.
     *   **Commit Point**: After table creation, interface/implementation development, and testing.
 

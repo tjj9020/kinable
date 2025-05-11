@@ -164,6 +164,17 @@ Resources:
               - 'sts:AssumeRole'
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies: # Add inline policies for specific DynamoDB access
+        - PolicyName: LambdaAuthorizerDynamoDBReadPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt FamiliesTable.Arn
+                  - !GetAtt ProfilesTable.Arn
 
   LambdaAuthorizerFunction:
     Type: AWS::Serverless::Function
@@ -177,6 +188,51 @@ Resources:
         Variables:
           COGNITO_USER_POOL_ID: !Ref KinableUserPool
           COGNITO_CLIENT_ID: !Ref KinableUserPoolClient
+          FAMILIES_TABLE_NAME: !Ref FamiliesTable
+          PROFILES_TABLE_NAME: !Ref ProfilesTable
+
+  FamiliesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "KinableFamilies-${AWS::StackName}"
+      AttributeDefinitions:
+        - AttributeName: familyId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: familyId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Project
+          Value: Kinable
+        - Key: Environment
+          Value: Dev
+
+  ProfilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "KinableProfiles-${AWS::StackName}"
+      AttributeDefinitions:
+        - AttributeName: profileId
+          AttributeType: S
+        - AttributeName: familyId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: profileId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: FamilyIdIndex
+          KeySchema:
+            - AttributeName: familyId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Project
+          Value: Kinable
+        - Key: Environment
+          Value: Dev
 
 Outputs:
   HelloWorldApi:
@@ -193,4 +249,10 @@ Outputs:
     Value: !Ref KinableUserPoolClient
   LambdaAuthorizerFunctionArn:
     Description: "ARN for the Lambda Authorizer Function"
-    Value: !GetAtt LambdaAuthorizerFunction.Arn 
+    Value: !GetAtt LambdaAuthorizerFunction.Arn
+  FamiliesTableName:
+    Description: "Name of the Families DynamoDB table"
+    Value: !Ref FamiliesTable
+  ProfilesTableName:
+    Description: "Name of the Profiles DynamoDB table"
+    Value: !Ref ProfilesTable 

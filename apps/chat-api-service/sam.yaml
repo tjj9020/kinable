@@ -1,0 +1,56 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  chat-api-service
+
+  Sample SAM Template for chat-api-service
+
+Globals:
+  Function:
+    Timeout: 3
+    MemorySize: 128
+    Runtime: nodejs18.x # Choose a Node.js runtime
+    Architectures:
+      - x86_64
+    # Handler is now per-function or should be if we add more functions
+
+Resources:
+  HelloWorldFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      # If specific tags are causing issues, we can control them here or omit them
+      # Tags:
+      #   - Key: created-by
+      #     Value: sam-cli
+
+  HelloWorldFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: . # Reference to the root of the chat-api-service package
+      Handler: dist/handlers/hello.handler # Explicitly define handler here
+      Role: !GetAtt HelloWorldFunctionRole.Arn # Use the explicitly defined role
+      Events:
+        HelloWorldEvent:
+          Type: HttpApi # Using HTTP API for simplicity and cost-effectiveness
+          Properties:
+            Path: /hello
+            Method: get
+
+Outputs:
+  HelloWorldApi:
+    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/hello"
+  HelloWorldFunctionArn:
+    Description: "Hello World Lambda Function ARN"
+    Value: !GetAtt HelloWorldFunction.Arn 

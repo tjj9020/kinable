@@ -66,6 +66,9 @@ importers:
 
   apps/chat-api-service:
     devDependencies:
+      '@types/aws-lambda':
+        specifier: ^8.10.0
+        version: 8.10.149
       '@types/jest':
         specifier: ^29.0.0
         version: 29.5.14

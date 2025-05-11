@@ -234,6 +234,25 @@
 
 ---
 
+## Development Notes & Learnings (from Phase 0)
+
+*   **AWS CLI Profile for SAM/CloudFormation:**
+    *   The `kinable-dev` profile (initially based on `PowerUserAccess`) required elevation to `AdministratorAccess` (or needed more specific IAM permissions like `iam:TagRole`, `iam:UntagRole`, and robust `iam:CreateRole` capabilities) for successful SAM deployments. This was due to IAM role creation and tagging operations performed by CloudFormation.
+    *   Ensure SSO tokens are active (`aws sso login --profile kinable-dev`) before deployment sessions, as they can expire.
+*   **SAM CLI:**
+    *   If your SAM template is not named `template.yaml` (e.g., `sam.yaml`), use the `-t` flag for build and deploy commands: `sam build -t sam.yaml`, `sam deploy -t sam.yaml ...`.
+    *   `samconfig.toml` is automatically created by `sam deploy --guided` and is useful for storing deployment parameters for subsequent deploys.
+*   **CloudFormation Stack Issues:**
+    *   Stacks in `ROLLBACK_FAILED` or `DELETE_FAILED` states must be manually deleted from the AWS CloudFormation console before new deployments can succeed. This process might involve choosing to skip/retain problematic resources during the console deletion and then manually cleaning up any orphaned resources (e.g., IAM roles) from their respective service consoles (e.g., IAM).
+*   **TypeScript & Build Process for Lambda:**
+    *   Ensure the TypeScript configuration (`tsconfig.json`, `tsconfig.build.json`) correctly compiles *all* Lambda handler source files into the `outDir` (e.g., `dist/`) while maintaining the directory structure expected by the Lambda `Handler` path defined in `sam.yaml` (e.g., `dist/handlers/hello.handler` corresponding to `src/handlers/hello.ts`).
+    *   It's good practice to run the local package build script (e.g., `pnpm build` within the service's directory) to verify the `dist` output structure before running `sam build`. This helped catch a TypeScript error (`noUnusedParameters`) that was preventing correct local compilation.
+    *   Compiler errors like `noUnusedParameters` (TS6133) will fail the `tsc` build; address them by using the parameter or prefixing its name with an underscore (`_`).
+*   **Jest Configuration for TypeScript:**
+    *   New TypeScript packages that include Jest tests require a local `jest.config.js` file (e.g., in the service's root directory) configured with the `ts-jest` preset to correctly process TypeScript test files.
+
+---
+
 This project plan will be stored as `PROJECT_PLAN.md` in the root of the `kinable` repository.
 
 **Next Steps:**

@@ -10,21 +10,18 @@ permissions:
 jobs:
   update-and-prepare-env: # Renamed Job 1
     runs-on: ubuntu-latest
-    outputs: # Define job outputs
+    outputs: # Define job outputs (NO test user creds here anymore)
       api_endpoint: ${{ steps.stack-outputs.outputs.api_endpoint }}
       cognito_pool_id: ${{ steps.stack-outputs.outputs.cognito_pool_id }}
       cognito_client_id: ${{ steps.stack-outputs.outputs.cognito_client_id }}
       families_table: ${{ steps.stack-outputs.outputs.families_table }}
       profiles_table: ${{ steps.stack-outputs.outputs.profiles_table }}
       aws_region: ${{ steps.stack-outputs.outputs.aws_region }}
-      # Output test user credentials
-      test_user_username: ${{ steps.create-test-user.outputs.test_user_username }}
-      test_user_password: ${{ steps.create-test-user.outputs.test_user_password }}
     env:
       AWS_REGION: us-east-2 # Or use a secret if preferred
       STACK_NAME: kinable-ci-dev-stack # PERSISTENT STACK NAME
       AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_ARN }}
-      CI_USER_PASSWORD: "YourCiPassword1!"
+      # CI_USER_PASSWORD: "YourCiPassword1!" # Moved to test job
 
     steps:
       - name: Checkout code
@@ -77,8 +74,6 @@ jobs:
         id: stack-outputs
         run: |
           echo "Fetching outputs for stack: ${{ env.STACK_NAME }}"
-          # Add retry logic or check stack status before describing
-          # Basic describe:
           outputs=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs" --output json)
           echo "Stack outputs JSON: $outputs"
           if [ -z "$outputs" ] || [ "$outputs" == "null" ]; then outputs="{}"; fi
@@ -89,53 +84,6 @@ jobs:
           echo "families_table=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="FamiliesTableName") | .OutputValue // ""')" >> $GITHUB_OUTPUT
           echo "profiles_table=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ProfilesTableName") | .OutputValue // ""')" >> $GITHUB_OUTPUT
           echo "aws_region=${{ env.AWS_REGION }}" >> $GITHUB_OUTPUT
-
-      - name: Create Test User
-        id: create-test-user
-        env:
-          # Get pool ID from the previous step's output
-          COGNITO_POOL_ID: ${{ steps.stack-outputs.outputs.cognito_pool_id }}
-        run: |
-          if [ -z "$COGNITO_POOL_ID" ]; then
-            echo "Error: Cognito Pool ID is empty. Cannot create test user."
-            exit 1
-          fi
-          _TEST_USER_USERNAME="ci-test-user-${{ github.run_id }}@example.com"
-          _TEST_USER_PASSWORD="${{ env.CI_USER_PASSWORD }}"
-          FAMILY_ID="ci-family-${{ github.run_id }}"
-          PROFILE_ID="ci-profile-${{ github.run_id }}"
-          ROLE="child"
-
-          echo "Creating user $_TEST_USER_USERNAME in pool $COGNITO_POOL_ID..."
-          aws cognito-idp admin-create-user \
-            --user-pool-id "$COGNITO_POOL_ID" \
-            --username "$_TEST_USER_USERNAME" \
-            --message-action SUPPRESS \
-            --temporary-password "$_TEST_USER_PASSWORD" \
-            --user-attributes Name=email,Value="$_TEST_USER_USERNAME" Name=email_verified,Value=true \
-            --region ${{ env.AWS_REGION }} || echo "User might already exist..."
-
-          echo "Setting permanent password for $_TEST_USER_USERNAME..."
-          aws cognito-idp admin-set-user-password \
-            --user-pool-id "$COGNITO_POOL_ID" \
-            --username "$_TEST_USER_USERNAME" \
-            --password "$_TEST_USER_PASSWORD" \
-            --permanent \
-            --region ${{ env.AWS_REGION }}
-
-          echo "Updating attributes for $_TEST_USER_USERNAME..."
-          aws cognito-idp admin-update-user-attributes \
-            --user-pool-id "$COGNITO_POOL_ID" \
-            --username "$_TEST_USER_USERNAME" \
-            --user-attributes \
-              Name="custom:familyId",Value="$FAMILY_ID" \
-              Name="custom:profileId",Value="$PROFILE_ID" \
-              Name="custom:role",Value="$ROLE" \
-            --region ${{ env.AWS_REGION }}
-
-          echo "Test user setup complete."
-          echo "test_user_username=$_TEST_USER_USERNAME" >> $GITHUB_OUTPUT
-          echo "test_user_password=$_TEST_USER_PASSWORD" >> $GITHUB_OUTPUT
 
   run-tests: # Renamed Job 2
     runs-on: ubuntu-latest
@@ -148,12 +96,12 @@ jobs:
       TEST_DYNAMODB_TABLE_FAMILIES: ${{ needs.update-and-prepare-env.outputs.families_table }}
       TEST_DYNAMODB_TABLE_PROFILES: ${{ needs.update-and-prepare-env.outputs.profiles_table }}
       TEST_AWS_REGION: ${{ needs.update-and-prepare-env.outputs.aws_region }}
-      # Get test user credentials
-      TEST_USER_USERNAME: ${{ needs.update-and-prepare-env.outputs.test_user_username }}
-      TEST_USER_PASSWORD: ${{ needs.update-and-prepare-env.outputs.test_user_password }}
-      # Role needed for AWS calls during tests (if any)
+      # Role needed for AWS calls
       AWS_REGION: ${{ needs.update-and-prepare-env.outputs.aws_region }}
       AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_ARN }}
+      # Define password here
+      CI_USER_PASSWORD: "YourCiPassword1!"
+      # TEST_USER_USERNAME/PASSWORD will be set via $GITHUB_ENV in the Create User step
 
     steps:
       - name: Checkout code
@@ -167,8 +115,7 @@ jobs:
       - name: Setup PNPM
         uses: pnpm/action-setup@v4
 
-      - name: Setup AWS Credentials for Test
-        if: env.AWS_ROLE_TO_ASSUME != ''
+      - name: Setup AWS Credentials for Test/User Management
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
@@ -181,15 +128,62 @@ jobs:
       # - name: Build packages
       #   run: pnpm build
 
+      # Create Test User step MOVED here
+      - name: Create Test User
+        id: create-test-user # ID still useful for referencing username in delete step
+        run: |
+          if [ -z "${{ env.TEST_COGNITO_USER_POOL_ID }}" ]; then
+            echo "Error: Cognito Pool ID is empty. Cannot create test user."
+            exit 1
+          fi
+          _TEST_USER_USERNAME="ci-test-user-${{ github.run_id }}@example.com"
+          _TEST_USER_PASSWORD="${{ env.CI_USER_PASSWORD }}"
+          FAMILY_ID="ci-family-${{ github.run_id }}"
+          PROFILE_ID="ci-profile-${{ github.run_id }}"
+          ROLE="child" # Assuming schema attribute name is 'role'
+
+          echo "Creating user $_TEST_USER_USERNAME in pool ${{ env.TEST_COGNITO_USER_POOL_ID }}..."
+          aws cognito-idp admin-create-user \
+            --user-pool-id "${{ env.TEST_COGNITO_USER_POOL_ID }}" \
+            --username "$_TEST_USER_USERNAME" \
+            --message-action SUPPRESS \
+            --temporary-password "$_TEST_USER_PASSWORD" \
+            --user-attributes Name=email,Value="$_TEST_USER_USERNAME" Name=email_verified,Value=true \
+            --region ${{ env.AWS_REGION }} || echo "User might already exist..."
+
+          echo "Setting permanent password for $_TEST_USER_USERNAME..."
+          aws cognito-idp admin-set-user-password \
+            --user-pool-id "${{ env.TEST_COGNITO_USER_POOL_ID }}" \
+            --username "$_TEST_USER_USERNAME" \
+            --password "$_TEST_USER_PASSWORD" \
+            --permanent \
+            --region ${{ env.AWS_REGION }}
+
+          echo "Updating attributes for $_TEST_USER_USERNAME..."
+          # Ensure Cognito Pool Schema has custom:familyId, custom:profileId, custom:role (all strings, mutable)
+          aws cognito-idp admin-update-user-attributes \
+            --user-pool-id "${{ env.TEST_COGNITO_USER_POOL_ID }}" \
+            --username "$_TEST_USER_USERNAME" \
+            --user-attributes \
+              Name="custom:familyId",Value="$FAMILY_ID" \
+              Name="custom:profileId",Value="$PROFILE_ID" \
+              Name="custom:role",Value="$ROLE" \
+            --region ${{ env.AWS_REGION }}
+
+          echo "Test user setup complete."
+          # Set environment variables for the next step (Run Integration Tests)
+          echo "TEST_USER_USERNAME=$_TEST_USER_USERNAME" >> $GITHUB_ENV
+          echo "TEST_USER_PASSWORD=$_TEST_USER_PASSWORD" >> $GITHUB_ENV
+
+
       - name: Run Integration Tests
+        # TEST_USER_USERNAME and TEST_USER_PASSWORD are set in GITHUB_ENV by previous step
         run: pnpm --filter @kinable/chat-api-service test:integration
 
-      - name: Delete Test User # Cleanup step within the test job
+      - name: Delete Test User # Cleanup step uses TEST_USER_USERNAME from GITHUB_ENV
         if: always()
         run: |
-          _USER_TO_DELETE="${{ env.TEST_USER_USERNAME }}" # Get from env populated by 'needs'
-
-          if [ -z "$_USER_TO_DELETE" ]; then
+          if [ -z "${{ env.TEST_USER_USERNAME }}" ]; then # Check GITHUB_ENV variable
             echo "Test username not found in env, skipping deletion."
             exit 0
           fi
@@ -198,8 +192,8 @@ jobs:
              exit 0
           fi
 
-          echo "Deleting test user: $_USER_TO_DELETE from pool ${{ env.TEST_COGNITO_USER_POOL_ID }}..."
+          echo "Deleting test user: ${{ env.TEST_USER_USERNAME }} from pool ${{ env.TEST_COGNITO_USER_POOL_ID }}..."
           aws cognito-idp admin-delete-user \
             --user-pool-id "${{ env.TEST_COGNITO_USER_POOL_ID }}" \
-            --username "$_USER_TO_DELETE" \
-            --region ${{ env.AWS_REGION }} || echo "Failed to delete user $_USER_TO_DELETE" 
+            --username "${{ env.TEST_USER_USERNAME }}" \
+            --region ${{ env.AWS_REGION }} || echo "Failed to delete user ${{ env.TEST_USER_USERNAME }}" 

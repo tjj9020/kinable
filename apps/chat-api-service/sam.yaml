@@ -241,6 +241,121 @@ Resources:
           PointInTimeRecoverySpecification:
             PointInTimeRecoveryEnabled: true
 
+  # Configuration table for AI provider settings
+  ProviderConfigTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Properties:
+      TableName: !Sub "KinableProviderConfig-${AWS::StackName}"
+      AttributeDefinitions:
+        - AttributeName: configId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: configId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Replicas:
+        - Region: us-east-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+        - Region: us-west-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+            
+  # Circuit breaker state table for provider health tracking
+  ProviderHealthTable:
+    Type: AWS::DynamoDB::GlobalTable
+    Properties:
+      TableName: !Sub "KinableProviderHealth-${AWS::StackName}"
+      AttributeDefinitions:
+        - AttributeName: providerRegion
+          AttributeType: S
+      KeySchema:
+        - AttributeName: providerRegion
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      Replicas:
+        - Region: us-east-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+        - Region: us-west-2
+          PointInTimeRecoverySpecification:
+            PointInTimeRecoveryEnabled: true
+            
+  # Secret for OpenAI API key
+  OpenAIApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}-${AWS::Region}-openai-api-key"
+      Description: "API key for OpenAI"
+      SecretString: '{"current": "sk-placeholder-for-openai", "previous": ""}'
+            
+  # Role for the chat router function
+  ChatRouterFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ChatRouterDynamoDBPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt ProviderConfigTable.Arn
+                  - !GetAtt ProviderHealthTable.Arn
+        - PolicyName: ChatRouterSecretsManagerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref OpenAIApiKeySecret
+                  
+  # Chat router Lambda function
+  ChatRouterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: dist/handlers/chatRouter.handler
+      Runtime: nodejs20.x
+      Timeout: 30  # LLM calls can take time
+      MemorySize: 256  # More memory for handling requests
+      Role: !GetAtt ChatRouterFunctionRole.Arn
+      Environment:
+        Variables:
+          PROVIDER_CONFIG_TABLE: !Ref ProviderConfigTable
+          PROVIDER_HEALTH_TABLE: !Ref ProviderHealthTable
+          OPENAI_API_KEY_SECRET: !Ref OpenAIApiKeySecret
+      Events:
+        ChatEvent:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref KinableHttpApi
+            Path: /v1/chat
+            Method: post
+            Auth:
+              Authorizer: JwtAuthorizer
+
 Outputs:
   HelloWorldApi:
     Description: "API Gateway endpoint URL for Prod stage for Hello World function"
@@ -262,4 +377,10 @@ Outputs:
     Value: !Ref FamiliesTable
   ProfilesTableName:
     Description: "Name of the Profiles DynamoDB table"
-    Value: !Ref ProfilesTable 
+    Value: !Ref ProfilesTable
+  ChatRouterApi:
+    Description: "API Gateway endpoint URL for Chat Router function"
+    Value: !Sub "https://${KinableHttpApi}.execute-api.${AWS::Region}.amazonaws.com/v1/chat"
+  ChatRouterFunctionArn:
+    Description: "Chat Router Lambda Function ARN"
+    Value: !GetAtt ChatRouterFunction.Arn 

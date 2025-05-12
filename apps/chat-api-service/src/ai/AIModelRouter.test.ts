@@ -22,7 +22,7 @@ jest.mock('./ConfigurationService', () => {
 // Create a mock provider
 const createMockProvider = (name: string, canFulfill = true, shouldSucceed = true): IAIModelProvider => {
   return {
-    generateResponse: jest.fn().mockImplementation(async (request: AIModelRequest): Promise<AIModelResult> => {
+    generateResponse: jest.fn().mockImplementation(async (_request: AIModelRequest): Promise<AIModelResult> => {
       if (shouldSucceed) {
         return {
           ok: true,

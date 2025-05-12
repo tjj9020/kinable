@@ -8,13 +8,25 @@ permissions:
   contents: read  # Required for checkout
 
 jobs:
-  deploy-and-test:
+  deploy: # <-- Deploy Job
     runs-on: ubuntu-latest
+    outputs: # Define job outputs
+      api_endpoint: ${{ steps.stack-outputs.outputs.api_endpoint }}
+      cognito_pool_id: ${{ steps.stack-outputs.outputs.cognito_pool_id }}
+      cognito_client_id: ${{ steps.stack-outputs.outputs.cognito_client_id }}
+      families_table: ${{ steps.stack-outputs.outputs.families_table }}
+      profiles_table: ${{ steps.stack-outputs.outputs.profiles_table }}
+      aws_region: ${{ env.AWS_REGION }}
+      stack_name: ${{ env.STACK_NAME }} # Pass stack name for cleanup
+      # Add outputs for test user credentials
+      test_user_username: ${{ steps.create-test-user.outputs.test_user_username }}
+      test_user_password: ${{ steps.create-test-user.outputs.test_user_password }}
     env:
       AWS_REGION: us-east-2
-      STACK_NAME: kinable-ci-test
-      # Replace with the ARN of the IAM role created in AWS for GitHub Actions OIDC
+      STACK_NAME: kinable-ci-test-${{ github.run_id }} # Unique stack name per run
       AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_ARN }}
+      # Define a fixed password for CI test user
+      CI_USER_PASSWORD: "YourCiPassword1!"
 
     steps:
       - name: Checkout code
@@ -61,8 +73,8 @@ jobs:
             --no-confirm-changeset \
             --template-file .aws-sam/build/template.yaml # Deploy the built template
 
-      - name: Get Stack Outputs
-        id: stack-outputs
+      - name: Get Stack Outputs & Set Job Outputs
+        id: stack-outputs # Give step an ID
         run: |
           echo "Fetching outputs for stack: ${{ env.STACK_NAME }}"
           outputs=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs" --output json)
@@ -74,30 +86,121 @@ jobs:
             outputs="{}"
           fi
 
-          # Parse outputs and export them as environment variables for subsequent steps
-          # Use jq to handle potential missing keys gracefully, defaulting to empty strings
-          echo "TEST_API_ENDPOINT=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="ChatApiServiceApiEndpoint") | .OutputValue // ""\')" >> $GITHUB_ENV
-          echo "TEST_COGNITO_USER_POOL_ID=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="CognitoUserPoolId") | .OutputValue // ""\')" >> $GITHUB_ENV
-          echo "TEST_COGNITO_CLIENT_ID=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="CognitoAppClientId") | .OutputValue // ""\')" >> $GITHUB_ENV
-          echo "TEST_DYNAMODB_TABLE_FAMILIES=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="FamiliesTableName") | .OutputValue // ""\')" >> $GITHUB_ENV
-          echo "TEST_DYNAMODB_TABLE_PROFILES=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="ProfilesTableName") | .OutputValue // ""\')" >> $GITHUB_ENV
-          echo "TEST_AWS_REGION=${{ env.AWS_REGION }}" >> $GITHUB_ENV
-          
-          echo "Environment variables set:"
-          echo TEST_API_ENDPOINT=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="ChatApiServiceApiEndpoint") | .OutputValue // ""\')
-          echo TEST_COGNITO_USER_POOL_ID=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="CognitoUserPoolId") | .OutputValue // ""\')
-          # Add other TEST_ variables here if needed, ensure they are not secrets!
+          # Use ::set-output to expose values from this step
+          echo "::set-output name=api_endpoint::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ChatRouterApi") | .OutputValue // ""')"
+          echo "::set-output name=cognito_pool_id::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="CognitoUserPoolId") | .OutputValue // ""')"
+          echo "::set-output name=cognito_client_id::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="CognitoUserPoolClientId") | .OutputValue // ""')"
+          echo "::set-output name=families_table::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="FamiliesTableName") | .OutputValue // ""')"
+          echo "::set-output name=profiles_table::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ProfilesTableName") | .OutputValue // ""')"
+
+      - name: Create Test User
+        id: create-test-user # Give step an ID
+        # Use outputs from the previous step directly
+        env:
+          COGNITO_POOL_ID: ${{ steps.stack-outputs.outputs.cognito_pool_id }}
+        run: |
+          TEST_USER_USERNAME="ci-test-user-${{ github.run_id }}@example.com"
+          TEST_USER_PASSWORD="${{ env.CI_USER_PASSWORD }}" # Use password from env
+          FAMILY_ID="ci-family-${{ github.run_id }}"
+          PROFILE_ID="ci-profile-${{ github.run_id }}"
+          ROLE="child" # Or configure as needed
+
+          echo "Creating user $TEST_USER_USERNAME in pool $COGNITO_POOL_ID..."
+          aws cognito-idp admin-create-user \
+            --user-pool-id "$COGNITO_POOL_ID" \
+            --username "$TEST_USER_USERNAME" \
+            --message-action SUPPRESS \
+            --temporary-password "$TEST_USER_PASSWORD" \
+            --user-attributes Name=email,Value="$TEST_USER_USERNAME" Name=email_verified,Value=true \
+            --region ${{ env.AWS_REGION }} || echo "User might already exist, continuing..."
+
+          echo "Setting permanent password for $TEST_USER_USERNAME..."
+          aws cognito-idp admin-set-user-password \
+            --user-pool-id "$COGNITO_POOL_ID" \
+            --username "$TEST_USER_USERNAME" \
+            --password "$TEST_USER_PASSWORD" \
+            --permanent \
+            --region ${{ env.AWS_REGION }}
+
+          echo "Updating attributes for $TEST_USER_USERNAME..."
+          aws cognito-idp admin-update-user-attributes \
+            --user-pool-id "$COGNITO_POOL_ID" \
+            --username "$TEST_USER_USERNAME" \
+            --user-attributes \
+              Name="custom:familyId",Value="$FAMILY_ID" \
+              Name="custom:profileId",Value="$PROFILE_ID" \
+              Name="custom:role",Value="$ROLE" \
+            --region ${{ env.AWS_REGION }}
+
+          echo "Test user setup complete."
+          # Set step outputs for the job outputs
+          echo "::set-output name=test_user_username::$TEST_USER_USERNAME"
+          echo "::set-output name=test_user_password::$TEST_USER_PASSWORD"
+
+
+  test: # <-- Test Job
+    runs-on: ubuntu-latest
+    needs: deploy # Specify dependency
+    env:
+      # Access outputs from the 'deploy' job
+      TEST_API_ENDPOINT: ${{ needs.deploy.outputs.api_endpoint }}
+      TEST_COGNITO_USER_POOL_ID: ${{ needs.deploy.outputs.cognito_pool_id }}
+      TEST_COGNITO_CLIENT_ID: ${{ needs.deploy.outputs.cognito_client_id }}
+      TEST_DYNAMODB_TABLE_FAMILIES: ${{ needs.deploy.outputs.families_table }}
+      TEST_DYNAMODB_TABLE_PROFILES: ${{ needs.deploy.outputs.profiles_table }}
+      TEST_AWS_REGION: ${{ needs.deploy.outputs.aws_region }}
+      # Get test user credentials from deploy job outputs
+      TEST_USER_USERNAME: ${{ needs.deploy.outputs.test_user_username }}
+      TEST_USER_PASSWORD: ${{ needs.deploy.outputs.test_user_password }}
+      # Credentials might be needed if tests call AWS APIs
+      AWS_REGION: ${{ needs.deploy.outputs.aws_region }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_ARN }} # Role still needed for potential AWS calls
+
+    steps:
+      - name: Checkout code # Need to checkout again in this job
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup AWS Credentials for Test
+        if: env.AWS_ROLE_TO_ASSUME != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies # Need to install again
+        run: pnpm install --frozen-lockfile
+
+      # No build needed if tests run against JS output (assuming build happened in deploy)
+      # If tests need TS source or run via ts-node, you might need pnpm build here too.
 
       - name: Run Integration Tests
-        # Assumes TEST_USER_USERNAME and TEST_USER_PASSWORD are set as GitHub secrets if needed by tests
-        # And other TEST_ variables are set from stack outputs in the previous step
-        env:
-          TEST_USER_USERNAME: ${{ secrets.TEST_USER_USERNAME }}
-          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
         run: pnpm --filter @kinable/chat-api-service test:integration
 
+  cleanup: # <-- Cleanup Job
+    runs-on: ubuntu-latest
+    needs: [deploy, test] # Run after deploy and test complete
+    if: always() # Ensures this step runs even if test job fails
+    env:
+      STACK_NAME: ${{ needs.deploy.outputs.stack_name }} # Get stack name from deploy job
+      AWS_REGION: ${{ needs.deploy.outputs.aws_region }} # Get region from deploy job
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_ARN }}
+
+    steps:
+      - name: Setup AWS Credentials for Cleanup
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
       - name: Delete Test Stack
-        if: always() # Ensures this step runs even if tests fail
         run: |
           echo "Deleting stack: ${{ env.STACK_NAME }}"
           aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}

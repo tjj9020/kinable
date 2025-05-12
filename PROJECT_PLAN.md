@@ -167,58 +167,118 @@
 ### **Phase 2: Core Chat Functionality**
 
 *   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces**
-    *   **Goal**: Create a Lambda that uses a flexible `IAIModelProvider` interface architecture to send prompts to AI models and return responses, with support for multiple provider adapters and graceful fallbacks.
+    *   **Goal**: Create a Lambda that uses a flexible `IAIModelProvider` interface architecture to send prompts to AI models and return responses, with initial support for one provider but designed for multi-provider and multi-region support.
     *   **Tasks**:
         *   In `packages/common-types/`, define comprehensive interfaces:
             *   `IAIModelProvider` interface with core methods:
                 * `generateResponse(request: AIModelRequest): Promise<AIModelResponse>`
                 * `canFulfill(request: AIModelRequest): boolean` for feature detection
                 * `getModelCapabilities(modelName: string): ModelCapabilities`
+                * `getProviderHealth(): ProviderHealthStatus` for availability monitoring
             *   `AIModelRequest` type with standardized fields:
                 * Core: `prompt`, `preferredProvider`, `preferredModel`, `maxTokens`, `temperature`
                 * Extensible: `options` dictionary for provider-specific parameters
                 * Context: `conversationId`, `profileId`, `familyId`, `userRegion`
+                * Routing: `requiredCapabilities`, `maxCostPerToken`, `priority`
             *   `AIModelResponse` type with:
                 * Standard: `text`, `tokens.prompt`, `tokens.completion`, `tokens.total`
                 * Provider metadata: `provider.name`, `provider.model`, `provider.features`
+                * Performance: `latency`, `timestamp`, `region`
         *   Create a robust provider architecture in `apps/chat-api-service/src/ai/`:
             *   `BaseAIModelProvider` abstract class with shared functionality
-            *   `OpenAIModelProvider` concrete implementation
-            *   `AIModelRouter` for provider selection with failover capabilities
-            *   Feature-based routing to select providers by capabilities, not just names
-            *   Circuit breaker pattern to detect and temporarily disable failing providers
+            *   `OpenAIModelProvider` concrete implementation (initial provider)
+            *   `ConfigurationService` for managing provider configurations, with:
+                * Version tracking for configuration objects
+                * Support for dual-key periods during key rotation
+                * Region-specific endpoint configurations
+            *   `AIModelRouter` for future provider selection with:
+                * Simple initial implementation focused on a single provider
+                * Design for future capabilities including failover, cost optimization, feature matching
+        *   **Configuration Management System**:
+            *   Create a `ProviderConfiguration` DynamoDB table (global table ready)
+            *   Schema with version, timestamp, and configuration JSON
+            *   Configuration format supporting:
+                * Provider availability by region
+                * Model capabilities and costs
+                * Routing rules and preferences
+            *   API for configuration updates with validation
         *   Store provider API keys in AWS Secrets Manager:
-            *   Implement key rotation schedule
-            *   Use region-specific secret names (e.g., `${AWS::StackName}-${AWS::Region}-openai-api-key`)
+            *   Region-specific secret names (e.g., `${AWS::StackName}-${AWS::Region}-openai-api-key`)
+            *   Support for key versioning with "current" and "previous" keys
             *   Add IAM permissions with least privilege access
         *   Write handler code (`src/handlers/chatRouter.ts`):
-            *   Lazy initialization of providers for cold start optimization
-            *   Structured error handling with standard error response format
             *   Extract user context from authorizer
-            *   Parameter validation and sanitization
-            *   Consistent logging with request IDs and performance metrics
+            *   Parameter validation and sanitization 
+            *   Initially use only one provider but route through the abstraction layer
+            *   Detailed error logging with provider-specific information
+            *   Region-aware request handling
         *   Unit test the components:
             *   Create mock providers for testing
-            *   Test the router logic with simulated failures
-            *   Test handler with mocked dependencies
+            *   Test configuration loading and validation
+            *   Test provider selection logic
         *   Create a new `/v1/chat` POST endpoint in API Gateway:
             *   Protected by `LambdaAuthorizerFunction`
             *   Configured with appropriate timeouts (30s)
             *   Add CORS headers for web client access
-    *   **Multi-Region Consideration**:
+    *   **Multi-Region Considerations**:
         *   Design `IAIModelProvider` to support region-specific model routing
-        *   Secrets Manager keys should follow region-aware naming pattern
-        *   Create a configuration system that maps user regions to nearest AI provider endpoints
-        *   Implement model availability checks to handle region-specific outages
-    *   **Definition of Done**: 
-        *   `/v1/chat` endpoint successfully returns AI responses via the interface-driven model provider
-        *   Provider failover works when primary provider fails
-        *   Unit and integration tests pass
-        *   API key is securely stored and rotated
-        *   Performance metrics are collected and logged
+        *   Ensure Secrets Manager keys use region-aware naming pattern
+        *   Store provider endpoint latency and availability metrics by region
+        *   Design configuration schema to support region-specific settings
+    *   **Definition of Done (Initial)**: 
+        *   `/v1/chat` endpoint successfully returns AI responses from a single provider
+        *   Complete abstraction layer that will support multiple providers
+        *   Configuration management system ready for future providers
+        *   Unit tests validate both current functionality and extensibility
     *   **Commit Point**: After chat router implementation, interface/provider development, and testing.
 
-*   **Step 2.2: Basic Moderation Engine Lambda (Pre-Prompt) with Interfaces**
+*   **Step 2.2: Add Second AI Provider with Failover Capabilities**
+    *   **Goal**: Extend the AI provider architecture to support a second provider (e.g., Anthropic Claude) with intelligent routing and failover capabilities.
+    *   **Tasks**:
+        *   Create a second provider implementation:
+            *   `AnthropicModelProvider` implementing `IAIModelProvider`
+            *   Adapt Anthropic's API to match our standardized interface
+            *   Add appropriate error handling and retry logic
+        *   Enhance the `AIModelRouter` with:
+            *   **Circuit Breaker Pattern**:
+                * Track error rates and latency per provider
+                * Temporarily disable providers exceeding error thresholds
+                * Implement exponential backoff for recovery
+                * Store circuit state in DynamoDB for persistence across invocations
+            *   **Smart Routing System**:
+                * Cost-based routing using request complexity estimation
+                * Capability-based provider selection
+                * Regional availability and performance-based routing
+                * Fallback chains with configurable priorities
+        *   Update the configuration schema to support:
+            *   Provider prioritization rules
+            *   Capability mapping for models
+            *   Cost thresholds for routing decisions
+            *   Health check parameters
+        *   Implement automated health checks:
+            *   CloudWatch scheduled Lambda to ping each provider
+            *   Status updates to DynamoDB configuration
+            *   Alerting via SNS for persistent provider issues
+        *   Add monitoring and logging enhancements:
+            *   Detailed metrics for each provider (success rate, latency, token usage)
+            *   Log provider selection decisions for auditing
+            *   Track cost efficiency of routing decisions
+        *   Update unit and integration tests:
+            *   Test failover scenarios
+            *   Validate correct provider selection based on capabilities
+            *   Ensure consistent behavior during provider outages
+    *   **Multi-Region Considerations**:
+        *   Ensure provider health status is tracked per region
+        *   Implement region-specific fallback strategies
+        *   Test cross-region failover scenarios
+    *   **Definition of Done**: 
+        *   System successfully routes requests between two providers
+        *   Automatic failover when primary provider is unavailable
+        *   Cost-based routing working correctly
+        *   All tests pass including simulated outage scenarios
+    *   **Commit Point**: After second provider implementation, enhanced routing, and failover testing.
+
+*   **Step 2.3: Basic Moderation Engine Lambda (Pre-Prompt) with Interfaces**
     *   **Goal**: Create a comprehensive content moderation system using an `IModerationProvider` interface to check prompts for inappropriate content before sending to AI models.
     *   **Tasks**:
         *   In `packages/common-types/`, define moderation interfaces:
@@ -238,8 +298,8 @@
             *   `OpenAIModerationProvider` implementation using OpenAI's moderation API
             *   `CustomRulesModerationProvider` for family-specific rules
             *   `CompositeModerationProvider` to combine multiple providers
-        *   Define `ModerationLogTable` in DynamoDB:
-            *   Schema with `recordId`, `familyId`, `profileId`, `timestamp`, `type`
+        *   Define `ModerationLogTable` in DynamoDB (global table ready):
+            *   Schema with `recordId`, `familyId`, `profileId`, `timestamp`, `type`, `region`
             *   GSI on `familyId` and `timestamp` for efficient queries
             *   TTL field for automatic data expiration
         *   Write moderation handler code (`src/handlers/moderationEngine.ts`):
@@ -256,20 +316,19 @@
             *   Handle moderation responses (block, filter, or allow)
             *   Log moderation events
         *   Update `ChatRouterFunction` unit tests
-    *   **Multi-Region Consideration**:
+    *   **Multi-Region Considerations**:
         *   Moderation logs include region information
-        *   Ensure `ModerationLogTable` follows region-aware naming
-        *   Store region-specific moderation rules
-        *   Consider latency impact of moderation API calls in different regions
+        *   Support region-specific moderation rules
+        *   Design for low-latency moderation in each region
     *   **Definition of Done**: 
         *   Prompts are moderated via interfaces before reaching AI models
         *   Content is filtered or blocked based on moderation results
         *   Family-specific and age-appropriate filtering works correctly
-        *   Moderation events are logged for auditing
+        *   Moderation events are logged with region information
         *   Tests validate moderation effectiveness across different content types
     *   **Commit Point**: After moderation implementation for prompts, testing.
 
-*   **Step 2.3: Moderation Engine Lambda (Post-Response) via Interfaces**
+*   **Step 2.4: Moderation Engine Lambda (Post-Response) via Interfaces**
     *   **Goal**: Extend the moderation system to check AI responses, ensuring all content delivered to users meets safety and appropriateness standards.
     *   **Tasks**:
         *   Enhance `ChatRouterFunction`:
@@ -292,58 +351,64 @@
             *   Verify correct handling of edge cases
             *   Measure and optimize moderation latency
         *   Create monitoring dashboard:
-            *   Track moderation events by category
+            *   Track moderation events by category and region
             *   Monitor false positive rates
             *   Alert on unusual patterns
-    *   **Performance Considerations**:
-        *   Implement concurrent processing when possible
-        *   Consider caching recent moderation results (with short TTL)
-        *   Optimize for minimal latency impact on user experience
+    *   **Multi-Region Considerations**:
+        *   Ensure consistent moderation standards across regions
+        *   Support region-specific logging and monitoring
+        *   Optimize for minimal latency impact in each region
     *   **Definition of Done**: 
         *   AI responses are moderated using the same framework as prompts
         *   Flagged content is appropriately handled based on severity
-        *   Both prompt and response moderation events are properly logged
+        *   Both prompt and response moderation events are properly logged with region context
         *   Performance impact is minimized
         *   End-to-end tests validate the complete flow
     *   **Commit Point**: After moderation implementation for responses, testing.
 
-*   **Step 2.4: Monitoring, Observability, and DevOps**
-    *   **Goal**: Implement comprehensive monitoring, alerting, and operational tools for the chat functionality.
+*   **Step 2.5: Monitoring, Observability, and DevOps**
+    *   **Goal**: Implement comprehensive monitoring, alerting, and operational tools for the chat functionality with multi-region support.
     *   **Tasks**:
         *   Set up structured logging:
             *   Configure JSON-formatted logs with consistent fields
-            *   Include request IDs, user IDs, and timing information
+            *   Include request IDs, user IDs, region information, and timing data
             *   Log appropriate request/response data (respecting privacy)
         *   Create CloudWatch dashboards:
-            *   API latency by endpoint and provider
-            *   Error rates by type and provider
-            *   Token usage by family and profile
-            *   Moderation events by category
+            *   API latency by endpoint, provider, and region
+            *   Error rates by type, provider, and region
+            *   Token usage by family, profile, and region
+            *   Moderation events by category and region
+            *   Provider availability and performance metrics
         *   Implement alerting:
             *   Set up alarms for elevated error rates
-            *   Create alerts for unusual moderation patterns
+            *   Create alerts for provider availability issues
             *   Monitor Lambda concurrency and throttling
+            *   Detect regional performance degradation
         *   Performance metrics collection:
-            *   Track providers' response times
+            *   Track providers' response times by region
             *   Measure token efficiency
             *   Monitor cold start frequencies
+            *   Compare provider performance across regions
         *   Cost tracking:
             *   Tag all resources for detailed cost allocation
             *   Track per-provider API costs
             *   Implement cost anomaly detection
+            *   Compare cost efficiency across providers
         *   Set up operational tools:
             *   Create scripts for provider health checks
             *   Implement automated testing of production endpoints
             *   Develop tools for managing provider API keys
-    *   **Multi-Region Consideration**:
-        *   Create region-specific dashboards
-        *   Implement cross-region monitoring
-        *   Set up failover tests
+            *   Build dashboards for monitoring multi-region performance
+    *   **Multi-Region Considerations**:
+        *   Create both region-specific and global dashboards
+        *   Implement cross-region performance comparison
+        *   Set up alerting for regional availability issues
+        *   Develop tooling for managing configuration across regions
     *   **Definition of Done**: 
-        *   Complete observability solution is in place
-        *   Alerts trigger appropriately for error conditions
-        *   Dashboards provide clear visibility into system health
-        *   Operational tools simplify maintenance tasks
+        *   Complete observability solution is in place for all regions
+        *   Alerts trigger appropriately for region-specific and global error conditions
+        *   Dashboards provide clear visibility into system health across regions
+        *   Operational tools simplify multi-region maintenance tasks
     *   **Commit Point**: After monitoring and observability implementation.
 
 ---

@@ -16,7 +16,7 @@ jobs:
       cognito_client_id: ${{ steps.stack-outputs.outputs.cognito_client_id }}
       families_table: ${{ steps.stack-outputs.outputs.families_table }}
       profiles_table: ${{ steps.stack-outputs.outputs.profiles_table }}
-      aws_region: ${{ env.AWS_REGION }}
+      aws_region: ${{ steps.stack-outputs.outputs.aws_region }}
       stack_name: ${{ env.STACK_NAME }} # Pass stack name for cleanup
       # Add outputs for test user credentials
       test_user_username: ${{ steps.create-test-user.outputs.test_user_username }}
@@ -80,30 +80,28 @@ jobs:
           outputs=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs" --output json)
           echo "Stack outputs JSON: $outputs"
           
-          # Check if outputs is empty or null, provide defaults if so
           if [ -z "$outputs" ] || [ "$outputs" == "null" ]; then
             echo "::warning::Stack outputs are empty or null. Using default empty values."
             outputs="{}"
           fi
 
-          # Use ::set-output to expose values from this step
-          echo "::set-output name=api_endpoint::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ChatRouterApi") | .OutputValue // ""')"
-          echo "::set-output name=cognito_pool_id::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="CognitoUserPoolId") | .OutputValue // ""')"
-          echo "::set-output name=cognito_client_id::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="CognitoUserPoolClientId") | .OutputValue // ""')"
-          echo "::set-output name=families_table::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="FamiliesTableName") | .OutputValue // ""')"
-          echo "::set-output name=profiles_table::$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ProfilesTableName") | .OutputValue // ""')"
+          echo "api_endpoint=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ChatRouterApi") | .OutputValue // ""')" >> $GITHUB_OUTPUT
+          echo "cognito_pool_id=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="CognitoUserPoolId") | .OutputValue // ""')" >> $GITHUB_OUTPUT
+          echo "cognito_client_id=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="CognitoUserPoolClientId") | .OutputValue // ""')" >> $GITHUB_OUTPUT
+          echo "families_table=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="FamiliesTableName") | .OutputValue // ""')" >> $GITHUB_OUTPUT
+          echo "profiles_table=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ProfilesTableName") | .OutputValue // ""')" >> $GITHUB_OUTPUT
+          echo "aws_region=${{ env.AWS_REGION }}" >> $GITHUB_OUTPUT
 
       - name: Create Test User
         id: create-test-user # Give step an ID
-        # Use outputs from the previous step directly
         env:
           COGNITO_POOL_ID: ${{ steps.stack-outputs.outputs.cognito_pool_id }}
         run: |
           TEST_USER_USERNAME="ci-test-user-${{ github.run_id }}@example.com"
-          TEST_USER_PASSWORD="${{ env.CI_USER_PASSWORD }}" # Use password from env
+          TEST_USER_PASSWORD="${{ env.CI_USER_PASSWORD }}"
           FAMILY_ID="ci-family-${{ github.run_id }}"
           PROFILE_ID="ci-profile-${{ github.run_id }}"
-          ROLE="child" # Or configure as needed
+          ROLE="child"
 
           echo "Creating user $TEST_USER_USERNAME in pool $COGNITO_POOL_ID..."
           aws cognito-idp admin-create-user \
@@ -133,10 +131,8 @@ jobs:
             --region ${{ env.AWS_REGION }}
 
           echo "Test user setup complete."
-          # Set step outputs for the job outputs
-          echo "::set-output name=test_user_username::$TEST_USER_USERNAME"
-          echo "::set-output name=test_user_password::$TEST_USER_PASSWORD"
-
+          echo "test_user_username=$TEST_USER_USERNAME" >> $GITHUB_OUTPUT
+          echo "test_user_password=$TEST_USER_PASSWORD" >> $GITHUB_OUTPUT
 
   test: # <-- Test Job
     runs-on: ubuntu-latest

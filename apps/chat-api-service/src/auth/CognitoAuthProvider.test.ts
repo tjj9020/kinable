@@ -21,14 +21,14 @@ describe('CognitoAuthProvider', () => {
     // Reset mocks before each test
     mockVerify.mockReset();
     (CognitoJwtVerifier.create as jest.Mock).mockClear();
-    authProvider = new CognitoAuthProvider(userPoolId, clientId, 'id');
+    authProvider = new CognitoAuthProvider({ userPoolId, clientId, tokenUse: 'id' });
   });
 
   it('should throw an error if userPoolId or clientId is missing', () => {
-    expect(() => new CognitoAuthProvider('', clientId)).toThrow(
+    expect(() => new CognitoAuthProvider({ userPoolId: '', clientId, tokenUse: 'id' })).toThrow(
       'Cognito User Pool ID and Client ID must be provided.'
     );
-    expect(() => new CognitoAuthProvider(userPoolId, '')).toThrow(
+    expect(() => new CognitoAuthProvider({ userPoolId, clientId: '', tokenUse: 'id' })).toThrow(
       'Cognito User Pool ID and Client ID must be provided.'
     );
   });

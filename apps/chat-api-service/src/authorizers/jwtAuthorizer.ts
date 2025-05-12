@@ -14,7 +14,7 @@ const awsRegion = process.env.AWS_REGION || '';
 // Initialize providers outside the handler for reuse
 let authProvider: CognitoAuthProvider;
 if (userPoolId && clientId) {
-  authProvider = new CognitoAuthProvider(userPoolId, clientId, tokenUse);
+  authProvider = new CognitoAuthProvider({ userPoolId, clientId, tokenUse });
 } else {
   console.error('Cognito User Pool ID or Client ID not configured in environment variables.');
 }

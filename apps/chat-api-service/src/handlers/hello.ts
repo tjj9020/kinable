@@ -1,9 +1,9 @@
-import { /* APIGatewayProxyEventV2, */ APIGatewayProxyResultV2 } from 'aws-lambda';
+import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 
 /**
  * Sample Lambda function which returns a hello world response
  */
-export const handler = async (/* unused parameter */): Promise<APIGatewayProxyResultV2> => {
+export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyResultV2> => {
     // Basic response structure
     const response: APIGatewayProxyResultV2 = {
         statusCode: 200,

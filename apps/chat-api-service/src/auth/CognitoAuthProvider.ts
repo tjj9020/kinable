@@ -15,17 +15,11 @@ function getRoleClaim(payload: any, claimName: string): string {
 
 export class CognitoAuthProvider implements IAuthProvider {
   private verifier;
-  private userPoolId: string;
-  private clientId: string;
-  private tokenUse: 'id' | 'access';
 
   constructor(config: { userPoolId: string; tokenUse: 'id' | 'access'; clientId: string }) {
     if (!config.userPoolId || !config.clientId) {
       throw new Error('Cognito User Pool ID and Client ID must be provided.');
     }
-    this.userPoolId = config.userPoolId;
-    this.clientId = config.clientId;
-    this.tokenUse = config.tokenUse; // 'id' for ID tokens, 'access' for access tokens
     this.verifier = CognitoJwtVerifier.create(config);
   }
 
@@ -69,7 +63,7 @@ export class CognitoAuthProvider implements IAuthProvider {
   }
 
   // Helper function to decode JWT (if needed elsewhere, keep, otherwise can remove)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  /* // Commenting out unused private method
   private decodeToken(token: string): Record<string, unknown> | null {
     try {
       const [_header, payloadBase64, _signature] = token.split('.');
@@ -83,4 +77,5 @@ export class CognitoAuthProvider implements IAuthProvider {
       return null;
     }
   }
+  */
 } 

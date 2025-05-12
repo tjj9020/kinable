@@ -1,17 +1,21 @@
 import { handler } from './hello';
-import { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
+import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 
 describe('Hello World Handler', () => {
   it('should return a 200 OK response with a Hello World message', async () => {
     const event = {} as APIGatewayProxyEventV2; // Minimal mock event
 
-    const result: APIGatewayProxyStructuredResultV2 = await handler(event);
+    const result: APIGatewayProxyResultV2 = await handler(event);
+
+    if (typeof result === 'string' || !result) {
+      throw new Error('Expected a structured result');
+    }
 
     expect(result.statusCode).toBe(200);
     expect(result.headers).toEqual({ 'Content-Type': 'application/json' });
 
     const body = JSON.parse(result.body || '{}');
-    expect(body.message).toBe('Hello World from the chat-api-service! SAM is working!');
+    expect(body.message).toBe('Hello from the API service!');
   });
 
   it('should return a 500 response if the handler throws an error', async () => {

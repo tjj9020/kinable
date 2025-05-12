@@ -14,7 +14,7 @@ jobs:
       AWS_REGION: us-east-2
       STACK_NAME: kinable-ci-test
       # Replace with the ARN of the IAM role created in AWS for GitHub Actions OIDC
-      AWS_ROLE_TO_ASSUME: arn:aws:iam::123456789012:role/YourGitHubActionsRole 
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_ARN }}
 
     steps:
       - name: Checkout code

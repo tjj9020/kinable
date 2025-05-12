@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: IAM Role for GitHub Actions OIDC to deploy serverless stacks. Assumed by the Kinable repo.
+
+Parameters:
+  ManagementAccountOIDCProviderArn:
+    Type: String
+    Description: The ARN of the OIDC provider created in the management account.
+    Default: arn:aws:iam::385120302151:oidc-provider/token.actions.githubusercontent.com # Your management account OIDC provider
+
+  GitHubOrg:
+    Type: String
+    Description: Your GitHub Organization name.
+    Default: tjj9020
+
+  GitHubRepo:
+    Type: String
+    Description: Your GitHub Repository name.
+    Default: kinable
+
+  TargetBranch:
+    Type: String
+    Description: The GitHub branch that is allowed to assume this role.
+    Default: main # e.g., main, develop, or specific feature branch
+
+Resources:
+  GitHubActionsDeployerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: GitHubActionsDeployerRole-Kinable # Consider making this more unique if deploying to multiple envs/repos
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref ManagementAccountOIDCProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${TargetBranch}"
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+      ManagedPolicyArns:
+        # WARNING: AdministratorAccess grants full access. Replace with least-privilege
+        # policies before using in staging or production environments.
+        - arn:aws:iam::aws:policy/AdministratorAccess
+        # - arn:aws:iam::aws:policy/AWSCloudFormationFullAccess # Replaced for broader CI/CD access
+        # TODO: Replace AdministratorAccess with a more restrictive custom policy tailored to your serverless deployment needs.
+      # You might also want to add an inline policy for more specific permissions:
+      # Policies:
+      #   - PolicyName: ServerlessDeployPermissions
+      #     PolicyDocument:
+      #       Version: '2012-10-17'
+      #       Statement:
+      #         - Effect: Allow
+      #           Action:
+      #             # Add specific actions needed for your serverless framework (e.g., s3:*, lambda:*, apigateway:*, dynamodb:*, iam:PassRole)
+      #           Resource: "*" # Scope down resources as much as possible
+
+Outputs:
+  RoleArn:
+    Description: ARN of the created IAM Role for GitHub Actions
+    Value: !GetAtt GitHubActionsDeployerRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RoleArn" 

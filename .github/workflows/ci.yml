@@ -21,6 +21,9 @@ jobs:
       - name: Setup PNPM
         uses: pnpm/action-setup@v4
 
+      - name: Clean Turbo Cache
+        run: rm -rf node_modules/.cache/turbo
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 

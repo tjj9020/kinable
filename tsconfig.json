@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "include": [],
+  "references": [
+    { "path": "./packages/common-types" },
+    { "path": "./apps/api-example-service" },
+    { "path": "./apps/chat-api-service" }
+    // Add other packages/apps here if they are part of the TS build
+  ]
+} 

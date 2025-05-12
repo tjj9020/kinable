@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "build": "turbo build",
+    "build": "tsc -b tsconfig.json --verbose",
     "dev": "turbo dev --parallel",
     "lint": "turbo lint",
     "test": "turbo test",

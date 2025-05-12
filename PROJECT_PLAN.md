@@ -167,59 +167,184 @@
 ### **Phase 2: Core Chat Functionality**
 
 *   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces**
-    *   **Goal**: Create a Lambda that uses an `IAIModelProvider` interface to send a prompt to an AI model and return the response.
+    *   **Goal**: Create a Lambda that uses a flexible `IAIModelProvider` interface architecture to send prompts to AI models and return responses, with support for multiple provider adapters and graceful fallbacks.
     *   **Tasks**:
-        *   In `packages/kinable-types/` (or a dedicated AI package), define `IAIModelProvider` (e.g., `generateResponse(prompt: string, userId: string): Promise<AIResponse>`) and `AIResponse` (containing `text`, `promptTokens`, `completionTokens`).
-        *   Create `OpenAIModelProvider` implementation of `IAIModelProvider` in `apps/chat-api-service/src/ai/`. This class will handle calls to OpenAI. Unit test this class, mocking the OpenAI SDK/API calls.
-        *   Store the OpenAI API key in AWS Secrets Manager.
-        *   Create `ChatRouterFunction` Lambda in `sam.yaml`. Grant it permission to read the secret.
+        *   In `packages/common-types/`, define comprehensive interfaces:
+            *   `IAIModelProvider` interface with core methods:
+                * `generateResponse(request: AIModelRequest): Promise<AIModelResponse>`
+                * `canFulfill(request: AIModelRequest): boolean` for feature detection
+                * `getModelCapabilities(modelName: string): ModelCapabilities`
+            *   `AIModelRequest` type with standardized fields:
+                * Core: `prompt`, `preferredProvider`, `preferredModel`, `maxTokens`, `temperature`
+                * Extensible: `options` dictionary for provider-specific parameters
+                * Context: `conversationId`, `profileId`, `familyId`, `userRegion`
+            *   `AIModelResponse` type with:
+                * Standard: `text`, `tokens.prompt`, `tokens.completion`, `tokens.total`
+                * Provider metadata: `provider.name`, `provider.model`, `provider.features`
+        *   Create a robust provider architecture in `apps/chat-api-service/src/ai/`:
+            *   `BaseAIModelProvider` abstract class with shared functionality
+            *   `OpenAIModelProvider` concrete implementation
+            *   `AIModelRouter` for provider selection with failover capabilities
+            *   Feature-based routing to select providers by capabilities, not just names
+            *   Circuit breaker pattern to detect and temporarily disable failing providers
+        *   Store provider API keys in AWS Secrets Manager:
+            *   Implement key rotation schedule
+            *   Use region-specific secret names (e.g., `${AWS::StackName}-${AWS::Region}-openai-api-key`)
+            *   Add IAM permissions with least privilege access
         *   Write handler code (`src/handlers/chatRouter.ts`):
-            *   Inject/instantiate `OpenAIModelProvider`.
-            *   Retrieve API key from Secrets Manager (can be done within the provider).
-            *   Accept a prompt from the API Gateway event (validated by authorizer).
-            *   Use `IAIModelProvider` to get the AI's response.
-            *   Return the response.
-        *   Unit test the `ChatRouterFunction` handler, mocking `IAIModelProvider`.
-        *   Create a new `/chat` POST endpoint in API Gateway, protected by `LambdaAuthorizerFunction`.
+            *   Lazy initialization of providers for cold start optimization
+            *   Structured error handling with standard error response format
+            *   Extract user context from authorizer
+            *   Parameter validation and sanitization
+            *   Consistent logging with request IDs and performance metrics
+        *   Unit test the components:
+            *   Create mock providers for testing
+            *   Test the router logic with simulated failures
+            *   Test handler with mocked dependencies
+        *   Create a new `/v1/chat` POST endpoint in API Gateway:
+            *   Protected by `LambdaAuthorizerFunction`
+            *   Configured with appropriate timeouts (30s)
+            *   Add CORS headers for web client access
     *   **Multi-Region Consideration**:
-        *   Design `IAIModelProvider` to support region-specific model routing.
-        *   Secrets Manager keys should follow region-aware naming pattern.
-        *   Prepare for region-specific model availability (some AI providers have regional restrictions).
-    *   **Definition of Done**: `/chat` endpoint successfully returns an AI response via the interface-driven model provider. Unit tests pass. API key is secure.
+        *   Design `IAIModelProvider` to support region-specific model routing
+        *   Secrets Manager keys should follow region-aware naming pattern
+        *   Create a configuration system that maps user regions to nearest AI provider endpoints
+        *   Implement model availability checks to handle region-specific outages
+    *   **Definition of Done**: 
+        *   `/v1/chat` endpoint successfully returns AI responses via the interface-driven model provider
+        *   Provider failover works when primary provider fails
+        *   Unit and integration tests pass
+        *   API key is securely stored and rotated
+        *   Performance metrics are collected and logged
     *   **Commit Point**: After chat router implementation, interface/provider development, and testing.
 
 *   **Step 2.2: Basic Moderation Engine Lambda (Pre-Prompt) with Interfaces**
-    *   **Goal**: Create a `ModerationEngineFunction` using an `IModerationProvider` to check prompts.
+    *   **Goal**: Create a comprehensive content moderation system using an `IModerationProvider` interface to check prompts for inappropriate content before sending to AI models.
     *   **Tasks**:
-        *   In `packages/kinable-types/` (or a dedicated moderation package), define `IModerationProvider` (e.g., `checkText(text: string, userId: string): Promise<ModerationResult>`) and `ModerationResult` (containing `isFlagged`, `categories`, `filteredText?`).
-        *   Create `OpenAIModerationProvider` implementation of `IModerationProvider` in `apps/chat-api-service/src/moderation/`. Unit test this.
-        *   Create `ModerationEngineFunction` Lambda in `sam.yaml`. Grant secret access if needed.
-        *   Write handler code (`src/handlers/moderationEngine.ts`):
-            *   Inject/instantiate `OpenAIModerationProvider`.
-            *   Call `IModerationProvider.checkText()`.
-            *   Log to `ModerationLogTable` (defined in `sam.yaml`, schema per `TECH_ROADMAP.md`) via `IDatabaseProvider` if flagged. Grant Lambda write access.
-            *   Return result.
-        *   Unit test the handler, mocking `IModerationProvider` and `IDatabaseProvider`.
-        *   Modify `ChatRouterFunction`:
-            *   Invoke `ModerationEngineFunction` (or directly use `IModerationProvider`) with the user's prompt.
-            *   If moderation blocks, return an error.
-        *   Update `ChatRouterFunction` unit tests.
+        *   In `packages/common-types/`, define moderation interfaces:
+            *   `IModerationProvider` with methods:
+                * `checkText(text: string, options: ModerationOptions): Promise<ModerationResult>`
+                * Optional specialized methods: `checkProfanity()`, `checkHarmfulContent()`, `checkPII()`
+            *   `ModerationOptions` with:
+                * User context: `userId`, `profileId`, `familyId`, `userRegion`
+                * Age-appropriate settings: `profileAge`, `strictnessLevel`
+                * Custom rules: `customRules[]` for family-specific filtering
+            *   `ModerationResult` with:
+                * Core: `isFlagged`, `categories: {category: boolean}`, `action: 'allow' | 'filter' | 'block'`
+                * Details: `categoryScores`, `filteredText`, `filterReason`
+            *   Constants for standard moderation categories (profanity, sexual content, etc.)
+        *   Create moderation providers in `apps/chat-api-service/src/moderation/`:
+            *   `BaseModerationProvider` abstract class with common functionality
+            *   `OpenAIModerationProvider` implementation using OpenAI's moderation API
+            *   `CustomRulesModerationProvider` for family-specific rules
+            *   `CompositeModerationProvider` to combine multiple providers
+        *   Define `ModerationLogTable` in DynamoDB:
+            *   Schema with `recordId`, `familyId`, `profileId`, `timestamp`, `type`
+            *   GSI on `familyId` and `timestamp` for efficient queries
+            *   TTL field for automatic data expiration
+        *   Write moderation handler code (`src/handlers/moderationEngine.ts`):
+            *   Initialize appropriate moderation providers
+            *   Apply age-appropriate filtering rules based on profile age
+            *   Log moderation events to DynamoDB
+            *   Return both verdict and filtered version when possible
+        *   Unit test moderation components:
+            *   Test with known problematic content
+            *   Test age-appropriate filtering levels
+            *   Test filter generation capabilities
+        *   Integrate with `ChatRouterFunction`:
+            *   Call moderation before sending to AI provider
+            *   Handle moderation responses (block, filter, or allow)
+            *   Log moderation events
+        *   Update `ChatRouterFunction` unit tests
     *   **Multi-Region Consideration**:
-        *   Moderation logs should include region information (e.g., as a separate attribute in the `ModerationLogTable`).
-        *   Ensure `ModerationLogTable` follows region-aware naming. Its partition key design and access patterns must adhere to the multi-region DynamoDB principles outlined in Core Principle #6 (e.g., regionalized key values, write-locality).
-    *   **Definition of Done**: Prompts are moderated via interfaces. Flagged prompts are blocked and logged. Unit tests pass.
+        *   Moderation logs include region information
+        *   Ensure `ModerationLogTable` follows region-aware naming
+        *   Store region-specific moderation rules
+        *   Consider latency impact of moderation API calls in different regions
+    *   **Definition of Done**: 
+        *   Prompts are moderated via interfaces before reaching AI models
+        *   Content is filtered or blocked based on moderation results
+        *   Family-specific and age-appropriate filtering works correctly
+        *   Moderation events are logged for auditing
+        *   Tests validate moderation effectiveness across different content types
     *   **Commit Point**: After moderation implementation for prompts, testing.
 
 *   **Step 2.3: Moderation Engine Lambda (Post-Response) via Interfaces**
-    *   **Goal**: Enhance to moderate AI responses using `IModerationProvider`.
+    *   **Goal**: Extend the moderation system to check AI responses, ensuring all content delivered to users meets safety and appropriateness standards.
     *   **Tasks**:
-        *   Modify `ChatRouterFunction`:
-            *   After receiving AI response, use `IModerationProvider.checkText()` with the AI's response.
-            *   If flagged, filter/block and log.
-        *   Update `ModerationLogTable` entries to distinguish prompt vs. response moderation.
-        *   Update `ChatRouterFunction` unit tests.
-    *   **Definition of Done**: AI responses are moderated. Flagged content handled and logged. Unit tests pass.
+        *   Enhance `ChatRouterFunction`:
+            *   Implement two-phase moderation (pre-prompt and post-response)
+            *   Add configuration for different moderation strategies per model
+            *   Handle different response types (filter vs. block) for AI-generated content
+        *   Improve moderation logging:
+            *   Log both prompt and response moderation events
+            *   Include relevant metadata (source model, category scores, etc.)
+            *   Implement mechanism to report false positives
+        *   Add response sanitization capabilities:
+            *   Use LLM-based content rewriting for borderline cases
+            *   Implement word/phrase replacement for simple cases
+            *   Add warnings to filtered responses
+        *   Enhance error handling for moderation failures:
+            *   Implement fallback strategies when moderation service is unavailable
+            *   Define risk-based policy for handling moderation timeouts
+        *   Update tests:
+            *   Test end-to-end flow with problematic prompts and responses
+            *   Verify correct handling of edge cases
+            *   Measure and optimize moderation latency
+        *   Create monitoring dashboard:
+            *   Track moderation events by category
+            *   Monitor false positive rates
+            *   Alert on unusual patterns
+    *   **Performance Considerations**:
+        *   Implement concurrent processing when possible
+        *   Consider caching recent moderation results (with short TTL)
+        *   Optimize for minimal latency impact on user experience
+    *   **Definition of Done**: 
+        *   AI responses are moderated using the same framework as prompts
+        *   Flagged content is appropriately handled based on severity
+        *   Both prompt and response moderation events are properly logged
+        *   Performance impact is minimized
+        *   End-to-end tests validate the complete flow
     *   **Commit Point**: After moderation implementation for responses, testing.
+
+*   **Step 2.4: Monitoring, Observability, and DevOps**
+    *   **Goal**: Implement comprehensive monitoring, alerting, and operational tools for the chat functionality.
+    *   **Tasks**:
+        *   Set up structured logging:
+            *   Configure JSON-formatted logs with consistent fields
+            *   Include request IDs, user IDs, and timing information
+            *   Log appropriate request/response data (respecting privacy)
+        *   Create CloudWatch dashboards:
+            *   API latency by endpoint and provider
+            *   Error rates by type and provider
+            *   Token usage by family and profile
+            *   Moderation events by category
+        *   Implement alerting:
+            *   Set up alarms for elevated error rates
+            *   Create alerts for unusual moderation patterns
+            *   Monitor Lambda concurrency and throttling
+        *   Performance metrics collection:
+            *   Track providers' response times
+            *   Measure token efficiency
+            *   Monitor cold start frequencies
+        *   Cost tracking:
+            *   Tag all resources for detailed cost allocation
+            *   Track per-provider API costs
+            *   Implement cost anomaly detection
+        *   Set up operational tools:
+            *   Create scripts for provider health checks
+            *   Implement automated testing of production endpoints
+            *   Develop tools for managing provider API keys
+    *   **Multi-Region Consideration**:
+        *   Create region-specific dashboards
+        *   Implement cross-region monitoring
+        *   Set up failover tests
+    *   **Definition of Done**: 
+        *   Complete observability solution is in place
+        *   Alerts trigger appropriately for error conditions
+        *   Dashboards provide clear visibility into system health
+        *   Operational tools simplify maintenance tasks
+    *   **Commit Point**: After monitoring and observability implementation.
 
 ---
 

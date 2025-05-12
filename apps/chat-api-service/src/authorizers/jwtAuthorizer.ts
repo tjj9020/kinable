@@ -80,7 +80,7 @@ export const handler = async (
 
         if (profile.pauseStatusProfile) {
           console.log(`Profile ${userIdentity.profileId} is paused.`);
-          return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Profile is paused.' });
+          return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, null);
         }
 
         const family = await dbProvider.getItem<FamilyData>(
@@ -129,7 +129,7 @@ const generatePolicy = (
   principalId: string,
   effect: 'Allow' | 'Deny',
   resource: string,
-  context?: APIGatewayAuthorizerResultContext // Context passed to the integrated Lambda
+  context?: APIGatewayAuthorizerResultContext | null // Make context optional and allow null
 ): APIGatewayAuthorizerResult => {
   const authResponse: APIGatewayAuthorizerResult = {
     principalId: principalId,
@@ -143,8 +143,13 @@ const generatePolicy = (
         },
       ],
     },
-    context: context, // This context is passed to the backend Lambda
   };
+
+  // Only add context to the response if it is provided and not null
+  if (context) {
+    authResponse.context = context;
+  }
+  
   // console.log("Generated policy:", JSON.stringify(authResponse, null, 2));
   return authResponse;
 }; 

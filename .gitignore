@@ -41,10 +41,15 @@ pnpm-debug.log*
 .env.development.local
 .env.test.local
 .env.production.local
+.env.dev.remote
 
 # Temporary files
 tmp
 temp
+**/lambda-*.txt
+**/lambda-*.json
+**/tables.txt
+**/load-env.sh
 
 # Next.js (if we add a frontend later)
 .next/

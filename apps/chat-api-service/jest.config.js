@@ -15,6 +15,8 @@ module.exports = {
   moduleNameMapper: {
     // Handle module aliases (if you have them in tsconfig.paths)
     // e.g., '@src/(.*)': '<rootDir>/src/$1'
+    '^node-fetch$': require.resolve('node-fetch'),
+    '^amazon-cognito-identity-js$': require.resolve('amazon-cognito-identity-js'),
   },
   // setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'], // if you have a setup file
 }; 

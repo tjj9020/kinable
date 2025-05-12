@@ -411,6 +411,160 @@
         *   Operational tools simplify multi-region maintenance tasks
     *   **Commit Point**: After monitoring and observability implementation.
 
+## Phase 2 Implementation Decisions
+
+The following decisions establish the technical architecture, design patterns, and acceptance criteria for the Phase 2 AI Provider system. These specifications serve as our engineering contract for implementation.
+
+### 1. Interface Design & Error Handling
+
+#### 1.1 Result & Error Types
+```typescript
+// Standard Success Response
+export interface AIModelSuccess {
+  ok: true
+  text: string
+  tokens: { prompt: number; completion: number; total: number }
+  meta: ProviderMeta
+  stream?: AsyncIterable<string>      // present if streaming enabled
+  toolResult?: ToolResult            // present if function calling used
+}
+
+// Standard Error Response
+export interface AIModelError {
+  ok: false
+  code: 'RATE_LIMIT' | 'AUTH' | 'CONTENT' | 'CAPABILITY' | 'TIMEOUT' | 'UNKNOWN'
+  provider: string
+  status?: number                    // HTTP / SDK status if available
+  retryable: boolean
+  detail?: string                    // provider-specific message
+}
+```
+
+**Error Standardization Decisions:**
+- All provider-specific errors must map to one of the five standard error codes
+- Provider-specific details should be included in the `detail` field 
+- New error types require a minor version bump (v1.1) and adapter updates
+- Error responses include a `retryable` flag to signal whether retry is appropriate
+
+#### 1.2 Streaming vs Non-Streaming Support
+- All requests include a `streaming: boolean` flag
+- Providers must implement both modes when possible
+- If streaming isn't supported, return a `CAPABILITY` error and downgrade to non-streaming
+- Router will log capability misses for future provider selection optimization
+
+#### 1.3 Function-Calling / Tools Support
+- Optional `tools?: ToolCall[]` in request
+- Function-calling capable providers handle and return structured results
+- Non-supporting providers return `CAPABILITY` error with fallback to text models if allowed
+
+### 2. Provider Implementation Architecture
+
+#### 2.1 Authentication & Secrets Management
+- Store API keys in AWS Secrets Manager as JSON with both current and previous keys:
+  ```
+  ${stage}/${region}/${provider}/api-key
+  {"current": "key1", "previous": "key0"}
+  ```
+- Automatic key rotation every 30 days:
+  1. Move `current` to `previous`
+  2. Generate new key and test 
+  3. Update `current` when verified
+- Providers use dual-key strategy, trying current key first, then previous on 401 errors
+
+#### 2.2 Rate Limiting Strategy
+- Each provider exposes standard `ProviderLimits { rpm: number; tpm: number }`
+- Two-level token bucket implementation:
+  1. In-memory bucket per Lambda instance to handle normal traffic
+  2. DynamoDB rate counter with 1-second TTL to manage cross-instance bursts
+- Retry with exponential backoff (250ms → 4s) for rate limit errors
+
+#### 2.3 Provider Initialization
+- Lazy-load provider SDKs on first invocation to minimize cold start impact
+- Cache client in module scope for reuse across invocations
+- Use provisioned concurrency for ChatRouter Lambda in production
+
+### 3. Smart Routing System
+
+#### 3.1 Routing Decision Algorithm
+| Factor | Weight | Description |
+|--------|--------|-------------|
+| Cost | 0.4 | Real-time token cost from configuration |
+| Quality | 0.3 | Capability rating (1-5 scale) for required capabilities |
+| Latency | 0.2 | Exponentially weighted moving average of P95 latency |
+| Availability | 0.1 | Health status from circuit breaker |
+
+- Weighted scoring selects the best provider; if score < 0.6, fallback chain executes
+- All routing decisions logged to Kinesis for analysis and optimization
+
+#### 3.2 Circuit Breaker Implementation
+- State stored in DynamoDB `ProviderHealth` table (partition key: `provider#region`)
+- Circuit opens after 5 consecutive retryable errors
+- Cool-down period: 2 minutes × 2^n (n = number of open events), max 30 minutes
+- Cached state in memory with DynamoDB polling on each invocation
+
+### 4. Configuration Management
+
+#### 4.1 Configuration Structure
+- JSON schema with version tracking
+- Stored in DynamoDB global table for cross-region consistency
+- Includes provider definitions, model capabilities, routing rules, weights
+- Features controlled via feature flags for gradual rollout
+
+#### 4.2 Configuration Deployment
+- Version incremented with each change
+- Lambda caches configuration for 60 seconds to reduce read load
+- Schema validation before deployment
+- Staged rollout using percentage-based routing (based on family ID hash)
+- Deployment pipeline: PR → unit tests → config-staging → canary tests → production
+
+### 5. Multi-Region Implementation
+
+#### 5.1 Region Selection
+- User's region determined by `custom:region` claim in JWT token
+- If region mismatch (JWT region ≠ Lambda region), handle locally but track metric
+- Configuration synchronized across regions via DynamoDB global tables
+- Circuit breaker state also uses global tables for consistency
+
+#### 5.2 Regional Consistency
+- All provider configurations include region-specific endpoints
+- Availability tracked per region and provider
+- Client requests route to user's home region by default
+- Fallback to other regions only during major outages
+
+### 6. Testing & Monitoring Strategy
+
+#### 6.1 Testing Approach
+- Mocked AI providers for unit testing
+- Comprehensive tests for error handling, retries, circuit breakers
+- Synthetic tests with real provider connection (using minimal tokens)
+- Load testing with mixed prompt types for performance benchmarking
+
+#### 6.2 Monitoring Thresholds
+| Metric | Threshold | Alert |
+|--------|-----------|-------|
+| Provider Error Rate | > 2% (5-min avg) | PagerDuty - severity 2 |
+| Router Fallbacks | > 50 in 10 min | Slack warning |
+| Circuit Breaker Open | > 5 minutes | PagerDuty - severity 2 |
+| Chat Latency P95 | > 2 seconds | Slack warning |
+| Config Version Drift | > 1 between regions | PagerDuty - severity 1 |
+
+### 7. Security & Compliance
+
+#### 7.1 PII Handling
+- Strip email addresses and identifiable IDs from prompts
+- Replace with opaque hashes: `u:${hash}` for user references
+- Log {provider, model, userHash, tokens, timestamp} for audit trail
+
+#### 7.2 Key Security
+- Alert if key rotation fails or keys not changed in 35+ days
+- Log all key access attempts
+- Strict IAM permissions on Secrets Manager
+
+### 8. API Versioning Strategy
+- External API endpoints stay stable at `/v1/chat`
+- Breaking changes require a new version (`/v2/chat`) with 90+ days of dual support
+- Internal interfaces use semantic versioning with strict compatibility rules
+
 ---
 
 ### **Phase 3: Token Tracking & Basic Billing Logic with Interfaces**

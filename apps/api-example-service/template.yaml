@@ -6,7 +6,7 @@ Globals:
   Function:
     Timeout: 10
     MemorySize: 128
-    Runtime: nodejs18.x
+    Runtime: nodejs20.x
     Handler: app.lambdaHandler # Assuming output is dist/app.js
     CodeUri: . # Points to the service root, SAM build will use compiled output from dist/
     Environment:

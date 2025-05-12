@@ -9,7 +9,7 @@ Globals:
   Function:
     Timeout: 3
     MemorySize: 128
-    Runtime: nodejs18.x
+    Runtime: nodejs20.x
     Architectures:
       - x86_64
 
@@ -41,6 +41,7 @@ Resources:
                 - Authorization
             AuthorizerPayloadFormatVersion: 2.0
             EnableSimpleResponses: false # We're returning IAM policies, not simple bool
+            AuthorizerResultTtlInSeconds: 0 # Disable caching for tests
 
   # IAM role for API Gateway to invoke the Lambda authorizer
   LambdaAuthorizerInvokeRole:
@@ -74,6 +75,7 @@ Resources:
   HelloWorldFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Description: Adding a description to test CFN update behavior. # Test nudge
       CodeUri: . 
       Handler: dist/handlers/hello.handler
       Role: !GetAtt HelloWorldFunctionRole.Arn
@@ -178,7 +180,7 @@ Resources:
     Properties:
       CodeUri: .
       Handler: dist/authorizers/jwtAuthorizer.handler
-      Runtime: nodejs18.x
+      Runtime: nodejs20.x
       Timeout: 5
       Role: !GetAtt LambdaAuthorizerFunctionRole.Arn
       Environment:

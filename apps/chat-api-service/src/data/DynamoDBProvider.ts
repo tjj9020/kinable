@@ -1,4 +1,6 @@
-import { IDatabaseProvider, DatabaseKey, FamilyData, ProfileData } from '@kinable/common-types';
+import { IDatabaseProvider, DatabaseKey } from '@kinable/common-types';
+// Note: FamilyData and ProfileData types from common-types would be used with the generic T parameter
+// when calling these methods, but aren't directly referenced in the implementation.
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 

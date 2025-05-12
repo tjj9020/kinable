@@ -38,10 +38,11 @@ describe('CognitoAuthProvider', () => {
     const mockPayload = {
       sub: 'test-sub-123',
       email: 'test@example.com',
-      'custom:custom:familyId': 'fam123',
-      'custom:custom:profileId': 'prof456',
-      'custom:custom:role': 'guardian',
+      'custom:familyId': 'fam123',
+      'custom:profileId': 'prof456',
+      'custom:role': 'guardian',
       name: 'Test User',
+      'custom:region': 'us-east-1'
     };
     mockVerify.mockResolvedValue(mockPayload);
 
@@ -53,7 +54,7 @@ describe('CognitoAuthProvider', () => {
       role: 'guardian',
       isAuthenticated: true,
       displayName: 'Test User',
-      region: null,
+      region: 'us-east-1',
     };
 
     const result = await authProvider.verifyToken(mockToken);
@@ -87,17 +88,14 @@ describe('CognitoAuthProvider', () => {
     const mockToken = 'valid.jwt.token';
     const mockPayload = {
       sub: 'test-sub-789',
-      // email is missing
-      'custom:custom:familyId': 'fam789',
-      // profileId is missing
-      'custom:custom:role': 'child',
-      // name is missing
+      'custom:familyId': 'fam789',
+      'custom:role': 'child',
     };
     mockVerify.mockResolvedValue(mockPayload);
 
     const expectedIdentity: Partial<IUserIdentity> = {
       userId: 'test-sub-789',
-      email: undefined, // or null depending on getStringClaim for missing email
+      email: undefined,
       familyId: 'fam789',
       profileId: null,
       role: 'child',
@@ -107,7 +105,6 @@ describe('CognitoAuthProvider', () => {
     };
 
     const result = await authProvider.verifyToken(mockToken);
-    // Adjusting expectation for email based on getStringClaim returning null then coalesced to undefined
     expect(result).toEqual(expect.objectContaining(expectedIdentity)); 
     expect(result?.email).toBeUndefined();
     expect(result?.region).toBeNull();
@@ -119,10 +116,10 @@ describe('CognitoAuthProvider', () => {
     const mockPayload = {
       sub: 'test-sub-region',
       email: 'region@example.com',
-      'custom:custom:familyId': 'famRegion',
-      'custom:custom:profileId': 'profRegion',
-      'custom:custom:role': 'guardian',
-      'custom:custom:region': mockRegion,
+      'custom:familyId': 'famRegion',
+      'custom:profileId': 'profRegion',
+      'custom:role': 'guardian',
+      'custom:region': mockRegion,
       name: 'Region User',
     };
     mockVerify.mockResolvedValue(mockPayload);
@@ -146,7 +143,7 @@ describe('CognitoAuthProvider', () => {
     const mockToken = 'valid.jwt.token.invalid.region';
     const mockPayload = {
       sub: 'test-sub-invalid-region',
-      'custom:custom:region': 123, // Invalid type for region
+      'custom:region': 123,
     };
     mockVerify.mockResolvedValue(mockPayload);
 

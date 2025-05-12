@@ -34,5 +34,5 @@ jobs:
         run: pnpm build
 
       - name: Run Unit Tests Only
-        # Excludes files ending with integration.test.ts
-        run: pnpm test -- --testPathIgnorePatterns='integration\\.test\\.ts$' 
+        # Uses the test:unit script which excludes integration tests via jest config
+        run: pnpm turbo run test:unit # Corrected command 

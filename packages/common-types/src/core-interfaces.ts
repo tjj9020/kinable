@@ -10,6 +10,18 @@ export interface IUserIdentity {
   region?: string | null; // User's primary region
 }
 
+/**
+ * Context information for all request handling with tracing
+ */
+export interface RequestContext {
+  requestId: string;        // API Gateway or Lambda request ID
+  jwtSub?: string;          // Subject from the JWT
+  familyId?: string;        // Family ID from authenticated user
+  profileId?: string;       // Profile ID from authenticated user
+  region: string;           // Region handling the request
+  traceId: string;          // For distributed tracing
+}
+
 export interface IApiResponse<T = any> {
   success: boolean;
   data?: T;

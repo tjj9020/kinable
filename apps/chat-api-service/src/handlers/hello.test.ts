@@ -1,5 +1,5 @@
 import { handler } from './hello';
-import { APIGatewayProxyEventV2, APIGatewayProxyResultV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
+import { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 
 describe('Hello World Handler', () => {
   it('should return a 200 OK response with a Hello World message', async () => {

@@ -22,14 +22,14 @@ export interface RequestContext {
   traceId: string;          // For distributed tracing
 }
 
-export interface IApiResponse<T = any> {
+export interface IApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   message?: string;
   statusCode: number;
   error?: {
     code?: string; // e.g., 'VALIDATION_ERROR', 'UNAUTHORIZED'
-    details?: any;
+    details?: unknown;
   };
 }
 
@@ -140,7 +140,7 @@ export interface IDatabaseProvider {
    */
   query<T extends object>(
     tableName: string,
-    queryParams: any // Placeholder for actual query parameters structure
+    queryParams: unknown // Changed any to unknown - requires type assertion by caller
   ): Promise<T[] | null>;
 }
 
@@ -173,4 +173,4 @@ export interface ILogger {
   log(message: string, ...args: unknown[]): void;
 }
 
-export type Constructor<T = {}> = new (...args: unknown[]) => T; 
+export type Constructor<T = object> = new (...args: unknown[]) => T; 

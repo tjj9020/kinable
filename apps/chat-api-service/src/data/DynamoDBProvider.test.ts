@@ -28,7 +28,7 @@ jest.mock('@aws-sdk/lib-dynamodb', () => {
 });
 
 import { DynamoDBProvider } from './DynamoDBProvider';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 
 // Get references to the mocked functions

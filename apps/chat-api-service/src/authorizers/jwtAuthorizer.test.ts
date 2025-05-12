@@ -1,5 +1,7 @@
-import { APIGatewayRequestAuthorizerEventV2, APIGatewayAuthorizerResult, APIGatewayAuthorizerResultContext } from 'aws-lambda';
+import { APIGatewayRequestAuthorizerEventV2, APIGatewayAuthorizerResultContext, APIGatewayAuthorizerResult } from 'aws-lambda';
 import { IUserIdentity, ProfileData, FamilyData } from '@kinable/common-types';
+import { handler, generatePolicy } from '../authorizers/jwtAuthorizer';
+import { IAuthProvider } from '../../../../packages/common-types/src/auth-interfaces';
 
 // We're not going to use jest.mock() on CognitoAuthProvider
 // Instead, we'll directly inject our mock into jwtAuthorizer after importing it
@@ -140,29 +142,6 @@ const createTestableAuthorizer = (mockVerifyToken: jest.Mock, mockDbGetItem: jes
       console.error('Error during token verification:', error);
       return generatePolicy('unauthorized', 'Deny', event.routeArn, { message: 'Unauthorized - Internal Server Error' });
     }
-  };
-};
-
-// This is a simplified version of the policy generator function from jwtAuthorizer.ts
-const generatePolicy = (
-  principalId: string,
-  effect: 'Allow' | 'Deny',
-  resource: string,
-  context?: any
-) => {
-  return {
-    principalId,
-    policyDocument: {
-      Version: '2012-10-17',
-      Statement: [
-        {
-          Action: 'execute-api:Invoke',
-          Effect: effect,
-          Resource: resource,
-        },
-      ],
-    },
-    context,
   };
 };
 

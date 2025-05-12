@@ -142,4 +142,35 @@ export interface IDatabaseProvider {
     tableName: string,
     queryParams: any // Placeholder for actual query parameters structure
   ): Promise<T[] | null>;
-} 
+}
+
+export interface ApiError {
+  code: string;
+  details?: unknown;
+}
+
+export class ApiResponse<T = void> implements IApiResponse<T> {
+  success: boolean;
+  statusCode: number;
+  message?: string;
+  data?: T;
+  error?: ApiError;
+
+  constructor(success: boolean, statusCode: number, data?: T, message?: string, error?: ApiError) {
+    this.success = success;
+    this.statusCode = statusCode;
+    this.data = data;
+    this.message = message;
+    this.error = error;
+  }
+}
+
+export interface ILogger {
+  debug(message: string, ...args: unknown[]): void;
+  info(message: string, ...args: unknown[]): void;
+  warn(message: string, ...args: unknown[]): void;
+  error(message: string, ...args: unknown[]): void;
+  log(message: string, ...args: unknown[]): void;
+}
+
+export type Constructor<T = {}> = new (...args: unknown[]) => T; 

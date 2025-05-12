@@ -7,15 +7,16 @@ export interface IUserIdentity {
     displayName?: string;
     email?: string;
 }
-export interface IApiResponse<T = any> {
+export interface IApiError {
+    code: string;
+    details?: unknown;
+}
+export interface IApiResponse<T = void> {
     success: boolean;
-    data?: T;
-    message?: string;
     statusCode: number;
-    error?: {
-        code?: string;
-        details?: any;
-    };
+    message?: string;
+    data?: T;
+    error?: IApiError;
 }
 export interface IAuthProvider {
     /**

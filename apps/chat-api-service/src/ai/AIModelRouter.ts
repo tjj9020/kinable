@@ -99,10 +99,10 @@ export class AIModelRouter {
       
       // Send the request to the provider
       return await provider.generateResponse(request);
-    } catch (error: any) {
+    } catch (error: unknown) {
       return this.createError(
         'UNKNOWN',
-        `Error routing request: ${error.message || 'Unknown error'}`,
+        `Error routing request: ${(error instanceof Error ? error.message : 'Unknown error' )}`,
         500,
         true
       );

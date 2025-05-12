@@ -21,12 +21,12 @@ export interface TokenUsage {
 export interface ToolCall {
   name: string;
   description?: string;
-  parameters: Record<string, any>;
+  parameters: Record<string, unknown>;
 }
 
 export interface ToolResult {
   name: string;
-  result: any;
+  result: unknown;
 }
 
 // Success and error result types

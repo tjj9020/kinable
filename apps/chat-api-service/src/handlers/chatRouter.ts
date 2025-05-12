@@ -71,7 +71,7 @@ export const handler = async (
       });
     } else {
       // Error response
-      let statusCode = result.status || 500;
+      const statusCode = result.status || 500;
       return createErrorResponse(
         statusCode,
         result.detail || 'Error generating response',

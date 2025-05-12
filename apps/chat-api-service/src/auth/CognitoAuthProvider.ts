@@ -14,28 +14,24 @@ function getRoleClaim(payload: any, claimName: string): string {
 }
 
 export class CognitoAuthProvider implements IAuthProvider {
+  private verifier;
   private userPoolId: string;
   private clientId: string;
   private tokenUse: 'id' | 'access';
 
-  constructor(userPoolId: string, clientId: string, tokenUse: 'id' | 'access' = 'id') {
-    if (!userPoolId || !clientId) {
+  constructor(config: { userPoolId: string; tokenUse: 'id' | 'access'; clientId: string }) {
+    if (!config.userPoolId || !config.clientId) {
       throw new Error('Cognito User Pool ID and Client ID must be provided.');
     }
-    this.userPoolId = userPoolId;
-    this.clientId = clientId;
-    this.tokenUse = tokenUse; // 'id' for ID tokens, 'access' for access tokens
+    this.userPoolId = config.userPoolId;
+    this.clientId = config.clientId;
+    this.tokenUse = config.tokenUse; // 'id' for ID tokens, 'access' for access tokens
+    this.verifier = CognitoJwtVerifier.create(config);
   }
 
   public async verifyToken(token: string): Promise<IUserIdentity | null> {
-    const verifier = CognitoJwtVerifier.create({
-      userPoolId: this.userPoolId,
-      tokenUse: this.tokenUse,
-      clientId: this.clientId,
-    });
-
     try {
-      const payload = await verifier.verify(token) as CognitoIdTokenPayload | CognitoAccessTokenPayload;
+      const payload = await this.verifier.verify(token) as CognitoIdTokenPayload | CognitoAccessTokenPayload;
 
       let displayNameValue: string | undefined = undefined;
       if (typeof payload.name === 'string') {
@@ -52,12 +48,12 @@ export class CognitoAuthProvider implements IAuthProvider {
       const userIdentity: IUserIdentity = {
         userId: payload.sub || (payload as CognitoAccessTokenPayload).username || '',
         email: getStringClaim(payload, 'email') || undefined,
-        familyId: getStringClaim(payload, 'custom:custom:familyId'),
-        profileId: getStringClaim(payload, 'custom:custom:profileId'),
-        role: getRoleClaim(payload, 'custom:custom:role'),
+        familyId: getStringClaim(payload, 'custom:familyId'),
+        profileId: getStringClaim(payload, 'custom:profileId'),
+        role: getRoleClaim(payload, 'custom:role'),
         isAuthenticated: true,
         displayName: displayNameValue,
-        region: getStringClaim(payload, 'custom:custom:region'),
+        region: getStringClaim(payload, 'custom:region'),
       };
 
       if (!userIdentity.userId) {
@@ -66,8 +62,24 @@ export class CognitoAuthProvider implements IAuthProvider {
       }
 
       return userIdentity;
-    } catch (error) {
-      console.error('Token validation error:', error);
+    } catch (error: unknown) {
+      console.error('Token verification failed:', error);
+      return null;
+    }
+  }
+
+  // Helper function to decode JWT (if needed elsewhere, keep, otherwise can remove)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private decodeToken(token: string): Record<string, unknown> | null {
+    try {
+      const [_header, payloadBase64, _signature] = token.split('.');
+      if (!payloadBase64) {
+        return null;
+      }
+      const payloadJson = Buffer.from(payloadBase64, 'base64').toString('utf8');
+      return JSON.parse(payloadJson);
+    } catch (error: unknown) {
+      console.error('Error decoding token:', error);
       return null;
     }
   }

@@ -10,9 +10,6 @@ import {
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import * as dotenv from 'dotenv';
-import axios from 'axios';
-// Only import what's actually used from test-setup
-import { ID_TOKEN } from './test-setup';
 
 // Load environment variables from .env.dev.remote if it exists
 dotenv.config({ path: '.env.dev.remote' });
@@ -81,10 +78,6 @@ async function getJwtToken(username: string, password: string): Promise<string> 
     });
   });
 }
-
-// Utility functions from test-setup (making sure getItem from test-setup is marked as used for linter)
-// @ts-ignore - Suppress 'getItem' is defined but never used
-const getItem = function() { /* This is just to satisfy the linter */ };
 
 // Test API call with token
 async function callApiWithToken(token: string): Promise<{ status: number, body: any }> {

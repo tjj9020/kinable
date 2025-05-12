@@ -103,7 +103,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       };
       
       return result;
-    } catch (error: any) {
+    } catch (error: unknown) {
       const endTime = Date.now();
       const latency = endTime - startTime;
       
@@ -112,8 +112,21 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       
       // Handle specific OpenAI errors
       // In a real implementation, we would parse the error from the OpenAI SDK
-      const errorStatus = error.status || 500;
-      
+      // Need to check the error type before accessing properties like status
+      let errorStatus = 500;
+      let errorMessage = 'Unknown error';
+      if (typeof error === 'object' && error !== null) {
+        // Basic check if it looks like an error object with status/message
+        if ('status' in error && typeof error.status === 'number') {
+          errorStatus = error.status;
+        }
+        if ('message' in error && typeof error.message === 'string') {
+          errorMessage = error.message;
+        }
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+
       if (errorStatus === 401) {
         // Try with previous key if available
         if (this.previousApiKey && this.apiKey !== this.previousApiKey) {
@@ -161,7 +174,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       // For all other errors
       return this.createError(
         'UNKNOWN',
-        `OpenAI error: ${error.message || 'Unknown error'}`,
+        `OpenAI error: ${errorMessage}`,
         errorStatus,
         errorStatus >= 500 // Only retry on server errors
       );

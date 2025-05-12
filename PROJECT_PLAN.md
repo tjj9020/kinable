@@ -143,7 +143,7 @@
     *   **Definition of Done**: Tables are created via SAM. `IDatabaseProvider` and its `DynamoDBProvider` implementation exist and are unit tested. Authorizer has IAM permissions.
     *   **Commit Point**: After table creation, interface/implementation development, and testing.
 
-*   **Step 1.4: Enhance Lambda Authorizer with DB Checks via Interfaces**
+*   **Step 1.4: Enhance Lambda Authorizer with DB Checks via Interfaces [COMPLETED]**
     *   **Goal**: Update Lambda Authorizer to use `IDatabaseProvider` to fetch and use `pause_status` and `tokenBalance`.
     *   **Tasks**:
         *   Modify `jwtAuthorizer.ts`:

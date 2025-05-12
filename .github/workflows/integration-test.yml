@@ -45,17 +45,22 @@ jobs:
       - name: Build packages
         run: pnpm build # Uses tsc -b defined in root package.json
 
+      - name: Build SAM Application
+        working-directory: apps/chat-api-service
+        run: sam build -t sam.yaml
+
       - name: Deploy Test Stack
+        working-directory: apps/chat-api-service
         run: |
-          sam deploy \\
-            --stack-name ${{ env.STACK_NAME }} \\
-            --region ${{ env.AWS_REGION }} \\
-            --resolve-s3 \\
-            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \\
-            --no-fail-on-empty-changeset \\
-            --no-confirm-changeset \\
-            --template-file apps/chat-api-service/sam.yaml
-        
+          sam deploy \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --resolve-s3 \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --no-confirm-changeset \
+            --template-file .aws-sam/build/template.yaml # Deploy the built template
+
       - name: Get Stack Outputs
         id: stack-outputs
         run: |

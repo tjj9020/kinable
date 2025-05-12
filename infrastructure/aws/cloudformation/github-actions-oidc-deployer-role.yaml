@@ -2,11 +2,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: IAM Role for GitHub Actions OIDC to deploy serverless stacks. Assumed by the Kinable repo.
 
 Parameters:
-  ManagementAccountOIDCProviderArn:
-    Type: String
-    Description: The ARN of the OIDC provider created in the management account.
-    Default: arn:aws:iam::385120302151:oidc-provider/token.actions.githubusercontent.com # Your management account OIDC provider
-
   GitHubOrg:
     Type: String
     Description: Your GitHub Organization name.
@@ -32,7 +27,7 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Federated: !Ref ManagementAccountOIDCProviderArn
+              Federated: !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringLike:

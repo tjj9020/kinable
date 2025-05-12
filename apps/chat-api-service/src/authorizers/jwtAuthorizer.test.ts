@@ -1,7 +1,6 @@
-import { APIGatewayRequestAuthorizerEventV2, APIGatewayAuthorizerResultContext, APIGatewayAuthorizerResult } from 'aws-lambda';
+import { APIGatewayRequestAuthorizerEventV2, APIGatewayAuthorizerResultContext } from 'aws-lambda';
 import { IUserIdentity, ProfileData, FamilyData } from '@kinable/common-types';
-import { handler, generatePolicy } from '../authorizers/jwtAuthorizer';
-import { IAuthProvider } from '../../../../packages/common-types/src/auth-interfaces';
+import { generatePolicy } from '../authorizers/jwtAuthorizer';
 
 // We're not going to use jest.mock() on CognitoAuthProvider
 // Instead, we'll directly inject our mock into jwtAuthorizer after importing it

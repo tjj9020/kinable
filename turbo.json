@@ -22,7 +22,23 @@
       "dependsOn": [
         "build"
       ],
-      "outputs": []
+      "outputs": [],
+      "inputs": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "jest.config.js"
+      ]
+    },
+    "test:unit": {
+      "dependsOn": [
+        "build"
+      ],
+      "outputs": [],
+      "inputs": [
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "jest.config.js"
+      ]
     },
     "dev": {
       "cache": false,

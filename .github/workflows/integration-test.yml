@@ -1,0 +1,100 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch: # Allows manual triggering from the GitHub UI
+
+permissions:
+  id-token: write # Required for OIDC
+  contents: read  # Required for checkout
+
+jobs:
+  deploy-and-test:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-2
+      STACK_NAME: kinable-ci-test
+      # Replace with the ARN of the IAM role created in AWS for GitHub Actions OIDC
+      AWS_ROLE_TO_ASSUME: arn:aws:iam::123456789012:role/YourGitHubActionsRole 
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: \'20\'
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true # Ensures latest SAM CLI
+
+      - name: Setup AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build # Uses tsc -b defined in root package.json
+
+      - name: Deploy Test Stack
+        run: |
+          sam deploy \\
+            --stack-name ${{ env.STACK_NAME }} \\
+            --region ${{ env.AWS_REGION }} \\
+            --resolve-s3 \\
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \\
+            --no-fail-on-empty-changeset \\
+            --no-confirm-changeset \\
+            --template-file apps/chat-api-service/sam.yaml
+        
+      - name: Get Stack Outputs
+        id: stack-outputs
+        run: |
+          echo "Fetching outputs for stack: ${{ env.STACK_NAME }}"
+          outputs=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs" --output json)
+          echo "Stack outputs JSON: $outputs"
+          
+          # Check if outputs is empty or null, provide defaults if so
+          if [ -z "$outputs" ] || [ "$outputs" == "null" ]; then
+            echo "::warning::Stack outputs are empty or null. Using default empty values."
+            outputs="{}"
+          fi
+
+          # Parse outputs and export them as environment variables for subsequent steps
+          # Use jq to handle potential missing keys gracefully, defaulting to empty strings
+          echo "TEST_API_ENDPOINT=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="ChatApiServiceApiEndpoint") | .OutputValue // ""\')" >> $GITHUB_ENV
+          echo "TEST_COGNITO_USER_POOL_ID=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="CognitoUserPoolId") | .OutputValue // ""\')" >> $GITHUB_ENV
+          echo "TEST_COGNITO_CLIENT_ID=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="CognitoAppClientId") | .OutputValue // ""\')" >> $GITHUB_ENV
+          echo "TEST_DYNAMODB_TABLE_FAMILIES=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="FamiliesTableName") | .OutputValue // ""\')" >> $GITHUB_ENV
+          echo "TEST_DYNAMODB_TABLE_PROFILES=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="ProfilesTableName") | .OutputValue // ""\')" >> $GITHUB_ENV
+          echo "TEST_AWS_REGION=${{ env.AWS_REGION }}" >> $GITHUB_ENV
+          
+          echo "Environment variables set:"
+          echo TEST_API_ENDPOINT=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="ChatApiServiceApiEndpoint") | .OutputValue // ""\')
+          echo TEST_COGNITO_USER_POOL_ID=$(echo $outputs | jq -r \'.[] | select(.OutputKey=="CognitoUserPoolId") | .OutputValue // ""\')
+          # Add other TEST_ variables here if needed, ensure they are not secrets!
+
+      - name: Run Integration Tests
+        # Assumes TEST_USER_USERNAME and TEST_USER_PASSWORD are set as GitHub secrets if needed by tests
+        # And other TEST_ variables are set from stack outputs in the previous step
+        env:
+          TEST_USER_USERNAME: ${{ secrets.TEST_USER_USERNAME }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+        run: pnpm --filter @kinable/chat-api-service test:integration
+
+      - name: Delete Test Stack
+        if: always() # Ensures this step runs even if tests fail
+        run: |
+          echo "Deleting stack: ${{ env.STACK_NAME }}"
+          aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
+          echo "Waiting for stack deletion to complete..."
+          aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} || echo "Stack deletion wait failed, stack might already be deleted or in a failed state." 

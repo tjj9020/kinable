@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.build.json",
     "test": "jest",
     "test:unit": "jest --testPathIgnorePatterns=\\\\\\.integration\\\\\\.test\\\\\\.ts$",
+    "test:integration": "jest --testPathPattern=\\\\\\.integration\\\\\\.test\\\\\\.ts$",
     "lint": "eslint . --ext .ts --quiet",
     "deploy": "echo \"Deploy script to be implemented\""
   },

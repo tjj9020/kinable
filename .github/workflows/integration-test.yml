@@ -165,9 +165,9 @@ jobs:
             --user-pool-id "${{ env.TEST_COGNITO_USER_POOL_ID }}" \
             --username "$_TEST_USER_USERNAME" \
             --user-attributes \
-              Name="custom:familyId",Value="$FAMILY_ID" \
-              Name="custom:profileId",Value="$PROFILE_ID" \
-              Name="custom:role",Value="$ROLE" \
+              Name="custom:custom:familyId",Value="$FAMILY_ID" \
+              Name="custom:custom:profileId",Value="$PROFILE_ID" \
+              Name="custom:custom:role",Value="$ROLE" \
             --region ${{ env.AWS_REGION }}
 
           echo "Test user setup complete."

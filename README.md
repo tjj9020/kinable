@@ -22,6 +22,8 @@ kinable/
 │   └── common-types/                 # Shared TypeScript interfaces and types
 │       └── src/                      # Source folder
 │           ├── core-interfaces.ts    # Core application interfaces
+│           ├── config-schema.ts      # Configuration schemas for AI models
+│           ├── ai-interfaces.ts      # AI model provider interfaces
 │           └── index.ts              # Package entry point
 ├── tools/                            # Developer tools & utilities
 │   └── auth-testing/                 # Authentication testing utilities
@@ -57,6 +59,11 @@ kinable/
 
 2. **Mocks**: Use `__mocks__` directories for common mocks
    - Example: `src/auth/__mocks__/CognitoAuthProvider.ts`
+
+3. **Integration Tests**: End-to-end tests for API endpoints
+   - Located in `src/integration-tests/` directory
+   - Test real AWS endpoints with test users/data
+   - Run with `pnpm run test:e2e` 
 
 ### Deployment & Infrastructure
 
@@ -135,9 +142,27 @@ We use Turborepo to ensure consistent, repeatable builds across all packages. Th
 4. **Deploy**: Build SAM application (already compiled by Turborepo)
    ```bash
    cd apps/chat-api-service
-   sam build -t sam.yaml
-   sam deploy -t sam.yaml --profile kinable-dev
+   pnpm run deploy  # runs build-and-deploy.sh
    ```
+
+### AWS Lambda Deployment
+
+When deploying AWS Lambda functions from a monorepo with workspace dependencies, additional steps are needed to ensure proper bundling:
+
+1. **Workspace Dependencies in Lambda**: AWS Lambda cannot resolve workspace symlinks, which means special handling is required for shared packages.
+
+2. **Our Solution**: We use `build-and-deploy.sh` script that:
+   - Builds all packages in the correct order
+   - Runs SAM build
+   - Properly bundles shared packages by replacing symlinks with actual code
+   - Deploys to AWS
+
+3. **Using the Deployment Script**:
+   ```bash
+   cd apps/chat-api-service
+   pnpm run deploy  # or ./build-and-deploy.sh directly
+   ```
+   This script prompts for AWS profile, region, and stack name (with defaults).
 
 ### Enforcing Standards
 
@@ -198,37 +223,26 @@ Our serverless applications are built and deployed using AWS SAM (Serverless App
    ```
    This compiles TypeScript to JavaScript in the `dist/` directory, which SAM will package.
 
-2. **Build the SAM application**:
+2. **Deploy with the automated script**:
    ```bash
-   sam build -t sam.yaml
+   pnpm run deploy
    ```
    This command:
-   - Processes the SAM template (`sam.yaml`)
-   - Copies source code and dependencies
-   - Creates deployment artifacts in `.aws-sam/build/`
+   - Builds all packages in the monorepo
+   - Packages the Lambda functions with SAM
+   - Properly bundles workspace dependencies
+   - Deploys to AWS with the specified profile
 
-3. **Deploy to AWS**:
-   ```bash
-   sam deploy -t sam.yaml --profile kinable-dev
-   ```
-   This command:
-   - Uses the AWS `kinable-dev` profile (defined in AWS SSO)
-   - Deploys resources to the AWS account (105784982857)
-   - Creates/updates CloudFormation stack
-   - Packages and uploads artifacts to S3
-   - Deploys Lambda functions, API Gateway, and other resources
+   For first-time deployments, the script will prompt for:
+   - AWS Profile (default: kinable-dev)
+   - AWS Region (default: us-east-2)
+   - Stack Name (default: kinable-dev)
 
-   For first-time deployments, use guided mode:
+3. **Run integration tests**:
    ```bash
-   sam deploy -t sam.yaml --guided --profile kinable-dev
+   pnpm run test:e2e
    ```
-   This will walk you through configuration options and save them to `samconfig.toml`.
-
-4. **Verify deployment**:
-   ```bash
-   aws cloudformation describe-stacks --stack-name chat-api-service --profile kinable-dev
-   ```
-   Or check the CloudFormation console in the AWS Management Console.
+   This sends requests to the deployed API endpoints with test data.
 
 ### Troubleshooting Deployments
 

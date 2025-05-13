@@ -166,7 +166,7 @@
 
 ### **Phase 2: Core Chat Functionality**
 
-*   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces**
+*   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces [COMPLETED 2025-05-13]**
     *   **Goal**: Create a Lambda that uses a flexible `IAIModelProvider` interface architecture to send prompts to AI models and return responses, with initial support for one provider but designed for multi-provider and multi-region support.
     *   **Tasks**:
         *   In `packages/common-types/`, define comprehensive interfaces:
@@ -231,8 +231,25 @@
         *   Configuration management system ready for future providers
         *   Unit tests validate both current functionality and extensibility
     *   **Commit Point**: After chat router implementation, interface/provider development, and testing.
+    *   **Lessons Learned**:
+        *   When deploying serverless applications with monorepo workspace dependencies, special care is needed to properly bundle dependencies instead of relying on symlinks which don't work in AWS Lambda.
+        *   Custom build scripts can help ensure proper packaging of dependencies.
 
-*   **Step 2.2: Add Second AI Provider with Failover Capabilities**
+*   **Step 2.1.1: Initial End-to-End Validation of Chat Router [COMPLETED 2025-05-13]**
+    *   **Goal**: Confirm that the deployed `/v1/chat` endpoint (from Step 2.1) is fully functional by performing an end-to-end test. This includes JWT authentication, request routing through `ChatRouterFunction`, interaction with `IAIModelProvider` (single provider like OpenAI), API key retrieval, and receiving a valid response from the AI model.
+    *   **Tasks**:
+        *   Ensure the target environment (e.g., `kinable-dev`) is deployed with all components from Step 2.1, including a correctly configured and valid API key for the selected AI provider.
+        *   Obtain a valid Cognito JWT for a test user.
+        *   Send a POST request to the `/v1/chat` endpoint with the JWT and a sample prompt.
+        *   Verify a successful (e.g., HTTP 200) response containing the AI-generated text.
+        *   Troubleshoot any errors by checking CloudWatch logs for the `LambdaAuthorizerFunction` and `ChatRouterFunction`.
+    *   **Definition of Done**: A documented successful end-to-end test run, with the `/v1/chat` endpoint returning a valid AI response to an authenticated request. Any issues encountered during the initial test are diagnosed and resolved.
+    *   **Commit Point**: After successful validation and any necessary fixes.
+    *   **Lessons Learned**:
+        *   Integration tests should be designed to work with both mock and real API responses by checking for expected response structure rather than specific response content.
+        *   Proper deployment scripting ensures reproducible deployments and simplifies testing.
+
+*   **Step 2.2: Add Second AI Provider with Failover Capabilities [IN PROGRESS]**
     *   **Goal**: Extend the AI provider architecture to support a second provider (e.g., Anthropic Claude) with intelligent routing and failover capabilities.
     *   **Tasks**:
         *   Create a second provider implementation:
@@ -277,6 +294,10 @@
         *   Cost-based routing working correctly
         *   All tests pass including simulated outage scenarios
     *   **Commit Point**: After second provider implementation, enhanced routing, and failover testing.
+    *   **Partially Completed**:
+        *   Basic error handling and retry logic
+        *   Multi-region table configuration
+        *   Error standardization with proper types
 
 *   **Step 2.3: Basic Moderation Engine Lambda (Pre-Prompt) with Interfaces**
     *   **Goal**: Create a comprehensive content moderation system using an `IModerationProvider` interface to check prompts for inappropriate content before sending to AI models.

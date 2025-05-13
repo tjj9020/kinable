@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Test SAM Template for Cognito Custom Attributes
+
+Resources:
+  TestUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: TestCustomAttributesPool
+      Schema:
+        - Name: email # Standard attribute
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+        - Name: testFamilyId # Custom attribute defined WITHOUT custom: prefix
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+
+  TestUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref TestUserPool
+      ClientName: TestWebAppClient
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true # Enable if you plan to test OAuth flows
+      AllowedOAuthFlows: [code, implicit]    # Example OAuth flows
+      AllowedOAuthScopes:                    # Example OAuth scopes
+        - email
+        - openid
+        - profile
+        - aws.cognito.signin.user.admin
+      CallbackURLs: ["http://localhost:3000/callback"] # Example callback
+      LogoutURLs: ["http://localhost:3000/logout"]     # Example logout
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      ReadAttributes:
+        - email
+        - custom:testFamilyId #
+      WriteAttributes: # Only standard attributes for now
+        - email
+        - custom:testFamilyId
+
+Outputs:
+  TestUserPoolId:
+    Description: "ID of the Test Cognito User Pool"
+    Value: !Ref TestUserPool
+  TestUserPoolClientId:
+    Description: "ID of the Test Cognito User Pool Client"
+    Value: !Ref TestUserPoolClient 

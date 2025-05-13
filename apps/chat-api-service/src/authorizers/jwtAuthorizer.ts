@@ -66,15 +66,31 @@ export const handler = async (
       }
 
       try {
+        // Helper function to extract logical ID from a regionalized claim
+        const getLogicalId = (regionalIdClaim: string): string => {
+          if (!regionalIdClaim || typeof regionalIdClaim !== 'string') return '';
+          const parts = regionalIdClaim.split('#');
+          return parts.length === 3 ? parts[2] : regionalIdClaim; // Return last part if valid, else original (error case)
+        };
+
+        const logicalProfileId = getLogicalId(userIdentity.profileId);
+        const logicalFamilyId = getLogicalId(userIdentity.familyId);
+
+        if (!logicalProfileId || !logicalFamilyId) {
+          console.error('Failed to parse logical ID from profileId or familyId claim.', 
+            { profileClaim: userIdentity.profileId, familyClaim: userIdentity.familyId });
+          return generatePolicy(userIdentity.userId || 'unknown', 'Deny', event.routeArn, { message: 'Invalid ID format in token.' });
+        }
+
         const profile = await dbProvider.getItem<ProfileData>(
           profilesTableName,
           'profileId',
-          userIdentity.profileId,
+          logicalProfileId,     // Pass the extracted logical ID
           userIdentity.region
         );
 
         if (!profile) {
-          console.log(`Profile not found for profileId: ${userIdentity.profileId} in region: ${userIdentity.region}`);
+          console.log(`Profile not found for logicalProfileId: ${logicalProfileId} in region: ${userIdentity.region} (original claim: ${userIdentity.profileId})`);
           return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Profile not found.' });
         }
 
@@ -86,12 +102,12 @@ export const handler = async (
         const family = await dbProvider.getItem<FamilyData>(
           familiesTableName,
           'familyId',
-          userIdentity.familyId,
+          logicalFamilyId,      // Pass the extracted logical ID
           userIdentity.region
         );
 
         if (!family) {
-          console.log(`Family not found for familyId: ${userIdentity.familyId} in region: ${userIdentity.region}`);
+          console.log(`Family not found for logicalFamilyId: ${logicalFamilyId} in region: ${userIdentity.region} (original claim: ${userIdentity.familyId})`);
           return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Family not found.' });
         }
 

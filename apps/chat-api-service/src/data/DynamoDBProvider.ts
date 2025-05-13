@@ -51,12 +51,13 @@ export class DynamoDBProvider implements IDatabaseProvider {
     const params = {
       TableName: tableName,
       Key: key,
+      ConsistentRead: true, // Ensure strongly consistent reads
     };
     try {
       const { Item } = await this.docClient.send(new GetCommand(params));
       return Item ? Item as T : null;
     } catch (error) {
-      console.error(`Error getting item with key ${JSON.stringify(key)} from ${tableName} in region ${this.awsClientRegion}:`, error);
+      console.error(`Error getting item with key ${JSON.stringify(params.Key)} from ${tableName} in region ${this.awsClientRegion}:`, error);
       return null;
     }
   }

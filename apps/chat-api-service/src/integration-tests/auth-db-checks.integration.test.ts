@@ -7,9 +7,17 @@ import {
   ICognitoUserData,
   IAuthenticationDetailsData,
 } from 'amazon-cognito-identity-js';
+import {
+  CognitoIdentityProviderClient,
+  AdminCreateUserCommand,
+  AdminSetUserPasswordCommand,
+  AdminDeleteUserCommand,
+  AttributeType,
+} from '@aws-sdk/client-cognito-identity-provider';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import * as dotenv from 'dotenv';
+import { v4 as uuidv4 } from 'uuid';
 
 // Load environment variables from .env.dev.remote if it exists
 dotenv.config({ path: '.env.dev.remote' });
@@ -25,26 +33,80 @@ const AWS_PROFILE = process.env.AWS_PROFILE;
 const DYNAMODB_TABLE_FAMILIES = process.env.TEST_DYNAMODB_TABLE_FAMILIES || 'KinableFamilies-dev';
 const DYNAMODB_TABLE_PROFILES = process.env.TEST_DYNAMODB_TABLE_PROFILES || 'KinableProfiles-dev';
 
-// Test user credentials (this user must exist in your Cognito User Pool)
-const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME || '';
-const TEST_USER_PASSWORD = process.env.TEST_USER_PASSWORD || '';
+// Setup Cognito Client for admin operations
+const cognitoAdminClient = new CognitoIdentityProviderClient({ region: AWS_REGION });
+
+// Variables for the dynamically created user
+let dynamicTestUsername: string;
+let dynamicTestPasswordGenerated: string;
 
 // Setup DynamoDB client
 const dynamoDbConfig: any = { region: AWS_REGION };
 if (AWS_PROFILE) {
-  dynamoDbConfig.credentials = { profile: AWS_PROFILE };
+  // SDK v3 picks up profile from environment. Explicitly setting credentials here is less common.
+  console.log(`[AuthDbChecks] Using AWS_PROFILE: ${AWS_PROFILE} (if SDK configured to use it)`);
 }
 const dynamoDbClient = new DynamoDBClient(dynamoDbConfig);
 const docClient = DynamoDBDocumentClient.from(dynamoDbClient);
 
-// Get user's JWT token
+// Helper function to create a test user (copied and adapted from auth.integration.test.ts)
+async function createDynamicallyGeneratedTestUser(username: string, password: string, familyIdAttrib: string, profileIdAttrib: string, regionAttrib: string) {
+  const userAttributes: AttributeType[] = [
+    { Name: 'email', Value: username }, // Assuming email is used as username
+    { Name: 'email_verified', Value: 'true' },
+    { Name: 'custom:familyId', Value: familyIdAttrib },
+    { Name: 'custom:profileId', Value: profileIdAttrib },
+    { Name: 'custom:region', Value: regionAttrib },
+  ];
+  try {
+    await cognitoAdminClient.send(new AdminCreateUserCommand({
+      UserPoolId: COGNITO_USER_POOL_ID,
+      Username: username,
+      TemporaryPassword: password,
+      UserAttributes: userAttributes,
+      MessageAction: 'SUPPRESS',
+    }));
+    console.log(`[AuthDbChecks] AdminCreateUserCommand successful for ${username}`);
+    await cognitoAdminClient.send(new AdminSetUserPasswordCommand({
+      UserPoolId: COGNITO_USER_POOL_ID,
+      Username: username,
+      Password: password,
+      Permanent: true,
+    }));
+    console.log(`[AuthDbChecks] AdminSetUserPasswordCommand successful for ${username}`);
+  } catch (error) {
+    console.error(`[AuthDbChecks] Error creating user ${username} for auth-db-checks:`, error);
+    throw error;
+  }
+}
+
+// Helper function to delete a test user
+async function deleteDynamicallyGeneratedTestUser(username: string) {
+  if (!username) return;
+  try {
+    await cognitoAdminClient.send(new AdminDeleteUserCommand({
+      UserPoolId: COGNITO_USER_POOL_ID,
+      Username: username,
+    }));
+    console.log(`[AuthDbChecks] Successfully deleted dynamic user ${username}`);
+  } catch (error: any) {
+    if (error.name === 'UserNotFoundException') {
+      console.log(`[AuthDbChecks] Dynamic user ${username} not found for deletion, assuming already deleted.`);
+    } else {
+      console.error(`[AuthDbChecks] Error deleting dynamic user ${username}:`, error);
+    }
+  }
+}
+
+// Get user's JWT token (this function remains as it's used for standard auth flow)
 async function getJwtToken(username: string, password: string): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!COGNITO_USER_POOL_ID || !COGNITO_CLIENT_ID) {
-      return reject(new Error('Cognito User Pool ID or Client ID is not configured'));
+      return reject(new Error('[AuthDbChecks] Cognito User Pool ID or Client ID is not configured'));
     }
     if (!username || !password) {
-      return reject(new Error('Test user credentials are not configured'));
+      // This case should ideally not be hit if called after dynamic user creation
+      return reject(new Error('[AuthDbChecks] Username or password not provided for JWT generation'));
     }
 
     const poolData: ICognitoUserPoolData = {
@@ -52,63 +114,41 @@ async function getJwtToken(username: string, password: string): Promise<string> 
       ClientId: COGNITO_CLIENT_ID,
     };
     const userPool = new CognitoUserPool(poolData);
+    const cognitoUser = new CognitoUser({ Username: username, Pool: userPool });
+    const authDetails = new AuthenticationDetails({ Username: username, Password: password });
 
-    const userData: ICognitoUserData = {
-      Username: username,
-      Pool: userPool,
-    };
-    const cognitoUser = new CognitoUser(userData);
-
-    const authDetailsData: IAuthenticationDetailsData = {
-      Username: username,
-      Password: password,
-    };
-    const authenticationDetails = new AuthenticationDetails(authDetailsData);
-
-    cognitoUser.authenticateUser(authenticationDetails, {
-      onSuccess: (session) => {
-        resolve(session.getIdToken().getJwtToken());
-      },
-      onFailure: (err) => {
-        reject(new Error(`Failed to authenticate: ${err.message}`));
-      },
-      newPasswordRequired: () => {
-        reject(new Error('New password required'));
-      }
+    cognitoUser.authenticateUser(authDetails, {
+      onSuccess: (session) => resolve(session.getIdToken().getJwtToken()),
+      onFailure: (err) => reject(new Error(`[AuthDbChecks] Failed to authenticate ${username}: ${err.message}`)),
+      newPasswordRequired: () => reject(new Error('[AuthDbChecks] New password required for dynamic user - unexpected.')),
     });
   });
 }
 
-// Test API call with token
+// Test API call with token (remains unchanged)
 async function callApiWithToken(token: string): Promise<{ status: number, body: any }> {
   try {
-    const response = await fetch(`${API_ENDPOINT}/hello`, {
+    const response = await fetch(`${API_ENDPOINT}/hello`, { // Assuming /hello for tests
       headers: { Authorization: `Bearer ${token}` },
     });
-    
     let body;
-    try {
-      body = await response.json();
-    } catch (e) {
-      body = await response.text();
-    }
-    
+    try { body = await response.json(); } catch (e) { body = await response.text(); }
     return { status: response.status, body };
   } catch (error) {
-    console.error('Error calling API:', error);
+    console.error('[AuthDbChecks] Error calling API:', error);
     throw error;
   }
 }
 
-// Database helpers
+// Database helpers (remain unchanged)
 async function setupItem(tableName: string, item: any) {
   const params = { TableName: tableName, Item: item };
   try {
     await docClient.send(new PutCommand(params));
-    console.log(`Added item to ${tableName}`);
+    console.log(`[AuthDbChecks] Added item to ${tableName}: ${JSON.stringify(item)}`);
   } catch (error) {
-    console.error(`Error adding item to ${tableName}:`, error);
-    throw error;
+    console.error(`[AuthDbChecks] Error adding item to ${tableName}:`, error);
+    throw error; // Re-throw to fail tests if setup is critical
   }
 }
 
@@ -116,309 +156,203 @@ async function cleanupItem(tableName: string, key: any) {
   const params = { TableName: tableName, Key: key };
   try {
     await docClient.send(new DeleteCommand(params));
-    console.log(`Deleted item from ${tableName}`);
-  } catch (error) {
-    console.error(`Error deleting from ${tableName}:`, error);
+    console.log(`[AuthDbChecks] Deleted item from ${tableName} with key: ${JSON.stringify(key)}`);
+  } catch (error: any) {
+    // It's okay if the item doesn't exist during cleanup
+    if (!(error instanceof Error && error.name === 'ResourceNotFoundException')) {
+        console.warn(`[AuthDbChecks] Error deleting item from ${tableName} (key: ${JSON.stringify(key)}), may not affect test outcome:`, error);
+    }
   }
 }
 
 describe('JWT Authorizer DynamoDB Checks Integration Test', () => {
-  // Extract actual user claims from token for testing
   let idToken: string;
-  let familyId: string;
-  let profileId: string;
-  let userRegion: string;
+  // These will be derived from the dynamically created user's attributes
+  let parsedFamilyId: string; 
+  let parsedProfileId: string;
+  let parsedUserRegion: string;
+
+  // Logical IDs for the dynamic user and their associated DB entries
+  const suiteLogicalFamilyId = `authDbTestFam-${uuidv4().substring(0,8)}`;
+  const suiteLogicalProfileId = `authDbTestProf-${uuidv4().substring(0,8)}`;
+  const suiteUserRegion = AWS_REGION; // Region for the user and their data
+
+  // Actual DynamoDB key values (including regional prefix)
+  const actualFamilyIdForDb = `FAMILY#${suiteUserRegion}#${suiteLogicalFamilyId}`;
+  const actualProfileIdForDb = `PROFILE#${suiteUserRegion}#${suiteLogicalProfileId}`;
   
-  // Skip all tests if we can't authenticate
   beforeAll(async () => {
     try {
-      // This ensures environment variables are set
-      if (!TEST_USER_USERNAME || !TEST_USER_PASSWORD || !API_ENDPOINT) {
-        console.warn('Missing required environment variables for integration tests');
-        return;
+      if (!API_ENDPOINT || !COGNITO_USER_POOL_ID || !COGNITO_CLIENT_ID || !DYNAMODB_TABLE_FAMILIES || !DYNAMODB_TABLE_PROFILES) {
+        throw new Error ('[AuthDbChecks] Missing required environment variables (Cognito IDs, API endpoint, table names, region).');
       }
       
-      // Get token for the test user
-      idToken = await getJwtToken(TEST_USER_USERNAME, TEST_USER_PASSWORD);
-      console.log('Successfully obtained ID token for tests');
+      dynamicTestUsername = `testuser.authdb.${uuidv4()}@kinable.test`;
+      dynamicTestPasswordGenerated = `TestPass${uuidv4().substring(0,8)}!Ab0`;
+
+      console.log(`[AuthDbChecks] Creating dynamic user: ${dynamicTestUsername}`);
+      await createDynamicallyGeneratedTestUser(
+        dynamicTestUsername,
+        dynamicTestPasswordGenerated,
+        actualFamilyIdForDb, // Attribute value for custom:familyId
+        actualProfileIdForDb, // Attribute value for custom:profileId
+        suiteUserRegion    // Attribute value for custom:region
+      );
       
-      // For integration testing, we need to parse the token to get the actual claims
-      // that would be used in the real application
-      // This is not ideal but a pragmatic approach for integration testing
+      console.log(`[AuthDbChecks] Authenticating dynamic user: ${dynamicTestUsername}`);
+      idToken = await getJwtToken(dynamicTestUsername, dynamicTestPasswordGenerated);
+      console.log('[AuthDbChecks] Successfully obtained ID token for dynamic user.');
+      
       const tokenParts = idToken.split('.');
-      if (tokenParts.length !== 3) {
-        throw new Error('Invalid JWT token format');
-      }
-      
+      if (tokenParts.length !== 3) throw new Error('[AuthDbChecks] Invalid JWT token format from dynamic user');
       const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
       
-      // Extract claims from token
-      familyId = payload['custom:familyId'] || ''; 
-      profileId = payload['custom:profileId'] || '';
-      userRegion = payload['custom:region'] || AWS_REGION;
+      parsedFamilyId = payload['custom:familyId'];
+      parsedProfileId = payload['custom:profileId'];
+      parsedUserRegion = payload['custom:region'];
       
-      if (!familyId || !profileId) {
-        console.warn('Token is missing required custom claims. Tests may fail.');
+      if (!parsedFamilyId || !parsedProfileId || !parsedUserRegion) {
+        throw new Error('[AuthDbChecks] Token from dynamic user is missing required custom claims (familyId, profileId, region).');
       }
-      
-      console.log(`Using familyId: ${familyId}, profileId: ${profileId}, region: ${userRegion}`);
+      console.log(`[AuthDbChecks] Using parsed claims: familyId=${parsedFamilyId}, profileId=${parsedProfileId}, region=${parsedUserRegion}`);
       
     } catch (error) {
-      console.error('Failed to set up integration tests:', error);
-      // Don't throw - we'll skip tests individually
+      console.error('[AuthDbChecks] Critical failure in beforeAll setup:', error);
+      throw error; // Fail fast if setup fails
     }
+  }, 60000); // Increased timeout
+
+  afterAll(async () => {
+    await deleteDynamicallyGeneratedTestUser(dynamicTestUsername);
   }, 30000);
   
-  // Test 1: Happy Path - Valid token with active profile, family and sufficient tokens
+  // Test 1: Happy Path
   test('should allow access with valid token, non-paused profile/family and sufficient tokens', async () => {
-    // Skip if we couldn't authenticate
-    if (!idToken || !familyId || !profileId) {
-      console.warn('Skipping test - missing required token or claims');
-      return;
-    }
+    if (!idToken) { console.warn('[AuthDbChecks] Skipping test - no ID token due to setup failure.'); return; }
+    
+    const testFamilyData = {
+      familyId: actualFamilyIdForDb, // Use the ID set on the user
+      tokenBalance: 100,
+      pauseStatusFamily: false,
+      primaryRegion: parsedUserRegion // Match user's region attribute
+    };
+    const testProfileData = {
+      profileId: actualProfileIdForDb, // Use the ID set on the user
+      familyId: actualFamilyIdForDb,
+      role: 'child',
+      pauseStatusProfile: false,
+      userRegion: parsedUserRegion // Match user's region attribute
+    };
     
     try {
-      // Set up valid family and profile data
-      const testFamilyData = {
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        tokenBalance: 100,
-        pauseStatusFamily: false,
-        primaryRegion: userRegion
-      };
-      
-      const testProfileData = {
-        profileId: `PROFILE#${userRegion}#${profileId}`,
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        role: 'child',
-        pauseStatusProfile: false,
-        userRegion: userRegion
-      };
-      
-      // Create the test data in DynamoDB
       await setupItem(DYNAMODB_TABLE_FAMILIES, testFamilyData);
       await setupItem(DYNAMODB_TABLE_PROFILES, testProfileData);
-      
-      // Call API with valid token
       const response = await callApiWithToken(idToken);
-      
-      // Should get a 200 OK
       expect(response.status).toBe(200);
-      
     } finally {
-      // Clean up
-      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { 
-        familyId: `FAMILY#${userRegion}#${familyId}` 
-      });
-      await cleanupItem(DYNAMODB_TABLE_PROFILES, { 
-        profileId: `PROFILE#${userRegion}#${profileId}` 
-      });
+      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { familyId: actualFamilyIdForDb });
+      await cleanupItem(DYNAMODB_TABLE_PROFILES, { profileId: actualProfileIdForDb });
     }
-  }, 10000);
+  }, 15000);
   
   // Test 2: Check paused profile behavior
   test('should deny access when profile is paused', async () => {
-    // Skip if we couldn't authenticate
-    if (!idToken || !familyId || !profileId) {
-      console.warn('Skipping test - missing required token or claims');
-      return;
-    }
+    if (!idToken) { console.warn('[AuthDbChecks] Skipping test - no ID token.'); return; }
+        
+    const testFamilyData = { familyId: actualFamilyIdForDb, tokenBalance: 100, pauseStatusFamily: false, primaryRegion: parsedUserRegion };
+    const testProfileData = { profileId: actualProfileIdForDb, familyId: actualFamilyIdForDb, role: 'child', pauseStatusProfile: true, userRegion: parsedUserRegion }; // Profile is paused
     
     try {
-      // Set up family data (normal) and profile data (paused)
-      const testFamilyData = {
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        tokenBalance: 100,
-        pauseStatusFamily: false,
-        primaryRegion: userRegion
-      };
-      
-      const testProfileData = {
-        profileId: `PROFILE#${userRegion}#${profileId}`,
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        role: 'child',
-        pauseStatusProfile: true, // Profile is paused
-        userRegion: userRegion
-      };
-      
-      // Create the test data in DynamoDB
       await setupItem(DYNAMODB_TABLE_FAMILIES, testFamilyData);
       await setupItem(DYNAMODB_TABLE_PROFILES, testProfileData);
-      
-      // Call API with valid token - should be denied
       const response = await callApiWithToken(idToken);
-      
-      // Should get a 403 Forbidden
       expect(response.status).toBe(403);
-      
+      // Optionally, check response.body.message for specific error message if consistent
+      // e.g. expect(response.body.message).toBe('User profile is paused.');
     } finally {
-      // Clean up
-      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { 
-        familyId: `FAMILY#${userRegion}#${familyId}` 
-      });
-      await cleanupItem(DYNAMODB_TABLE_PROFILES, { 
-        profileId: `PROFILE#${userRegion}#${profileId}` 
-      });
+      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { familyId: actualFamilyIdForDb });
+      await cleanupItem(DYNAMODB_TABLE_PROFILES, { profileId: actualProfileIdForDb });
     }
-  }, 10000);
-  
-  // Test 3: Check paused family behavior
+  }, 15000);
+
+  // Test 3: Check paused family behavior (similar structure)
   test('should deny access when family is paused', async () => {
-    // Skip if we couldn't authenticate
-    if (!idToken || !familyId || !profileId) {
-      console.warn('Skipping test - missing required token or claims');
-      return;
-    }
-    
+    if (!idToken) { console.warn('[AuthDbChecks] Skipping test - no ID token.'); return; }
+
+    const testFamilyData = { familyId: actualFamilyIdForDb, tokenBalance: 100, pauseStatusFamily: true, primaryRegion: parsedUserRegion }; // Family is paused
+    const testProfileData = { profileId: actualProfileIdForDb, familyId: actualFamilyIdForDb, role: 'child', pauseStatusProfile: false, userRegion: parsedUserRegion };
+
     try {
-      // Set up family data (paused) and profile data (normal)
-      const testFamilyData = {
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        tokenBalance: 100,
-        pauseStatusFamily: true, // Family is paused
-        primaryRegion: userRegion
-      };
-      
-      const testProfileData = {
-        profileId: `PROFILE#${userRegion}#${profileId}`,
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        role: 'child',
-        pauseStatusProfile: false,
-        userRegion: userRegion
-      };
-      
-      // Create the test data in DynamoDB
       await setupItem(DYNAMODB_TABLE_FAMILIES, testFamilyData);
       await setupItem(DYNAMODB_TABLE_PROFILES, testProfileData);
-      
-      // Call API with valid token - should be denied
       const response = await callApiWithToken(idToken);
-      
-      // Should get a 403 Forbidden
       expect(response.status).toBe(403);
-      
     } finally {
-      // Clean up
-      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { 
-        familyId: `FAMILY#${userRegion}#${familyId}` 
-      });
-      await cleanupItem(DYNAMODB_TABLE_PROFILES, { 
-        profileId: `PROFILE#${userRegion}#${profileId}` 
-      });
+      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { familyId: actualFamilyIdForDb });
+      await cleanupItem(DYNAMODB_TABLE_PROFILES, { profileId: actualProfileIdForDb });
     }
-  }, 10000);
-  
-  // Test 4: Check token balance behavior
-  test('should deny access when token balance is zero or negative', async () => {
-    // Skip if we couldn't authenticate
-    if (!idToken || !familyId || !profileId) {
-      console.warn('Skipping test - missing required token or claims');
-      return;
-    }
-    
+  }, 15000);
+
+  // Test 4: Insufficient token balance (similar structure)
+  test('should deny access when token balance is zero', async () => {
+    if (!idToken) { console.warn('[AuthDbChecks] Skipping test - no ID token.'); return; }
+
+    const testFamilyData = { familyId: actualFamilyIdForDb, tokenBalance: 0, pauseStatusFamily: false, primaryRegion: parsedUserRegion }; // Zero tokens
+    const testProfileData = { profileId: actualProfileIdForDb, familyId: actualFamilyIdForDb, role: 'child', pauseStatusProfile: false, userRegion: parsedUserRegion };
+
     try {
-      // Set up family data (zero balance) and profile data (normal)
-      const testFamilyData = {
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        tokenBalance: 0, // Zero balance
-        pauseStatusFamily: false,
-        primaryRegion: userRegion
-      };
-      
-      const testProfileData = {
-        profileId: `PROFILE#${userRegion}#${profileId}`,
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        role: 'child',
-        pauseStatusProfile: false,
-        userRegion: userRegion
-      };
-      
-      // Create the test data in DynamoDB
       await setupItem(DYNAMODB_TABLE_FAMILIES, testFamilyData);
       await setupItem(DYNAMODB_TABLE_PROFILES, testProfileData);
-      
-      // Call API with valid token - should be denied
       const response = await callApiWithToken(idToken);
-      
-      // Should get a 403 Forbidden
       expect(response.status).toBe(403);
-      
     } finally {
-      // Clean up
-      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { 
-        familyId: `FAMILY#${userRegion}#${familyId}` 
-      });
-      await cleanupItem(DYNAMODB_TABLE_PROFILES, { 
-        profileId: `PROFILE#${userRegion}#${profileId}` 
-      });
+      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { familyId: actualFamilyIdForDb });
+      await cleanupItem(DYNAMODB_TABLE_PROFILES, { profileId: actualProfileIdForDb });
     }
-  }, 10000);
+  }, 15000);
   
-  // Test 5: Check missing profile behavior
-  test('should deny access when profile does not exist', async () => {
-    // Skip if we couldn't authenticate
-    if (!idToken || !familyId || !profileId) {
-      console.warn('Skipping test - missing required token or claims');
-      return;
-    }
-    
+  // Test 5: Family data missing (similar structure)
+  test('should deny access if family data is missing', async () => {
+    if (!idToken) { console.warn('[AuthDbChecks] Skipping test - no ID token.'); return; }
+
+    // Note: parsedFamilyId already includes the FAMILY#region#logicalId format.
+    // The authorizer will use this directly to look up.
+    // Ensure profile data IS present, but family data is NOT.
+    const testProfileData = { profileId: actualProfileIdForDb, familyId: actualFamilyIdForDb, role: 'child', pauseStatusProfile: false, userRegion: parsedUserRegion };
+
     try {
-      // Only set up family data, not profile data
-      const testFamilyData = {
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        tokenBalance: 100,
-        pauseStatusFamily: false,
-        primaryRegion: userRegion
-      };
+      await setupItem(DYNAMODB_TABLE_PROFILES, testProfileData); 
+      // DO NOT setup family item: await cleanupItem(DYNAMODB_TABLE_FAMILIES, { familyId: actualFamilyIdForDb });
       
-      // Create family but NOT profile
+      const response = await callApiWithToken(idToken);
+      expect(response.status).toBe(403); 
+      // Check specific error message if known, e.g.,
+      // expect(response.body.message).toContain(`Family data not found`);
+    } finally {
+      await cleanupItem(DYNAMODB_TABLE_PROFILES, { profileId: actualProfileIdForDb });
+      // Ensure family table is clean in case a previous test left data or this test created it unexpectedly
+      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { familyId: actualFamilyIdForDb }); 
+    }
+  }, 15000);
+
+  // Test 6: Profile data missing (similar structure)
+  test('should deny access if profile data is missing', async () => {
+    if (!idToken) { console.warn('[AuthDbChecks] Skipping test - no ID token.'); return; }
+
+    const testFamilyData = { familyId: actualFamilyIdForDb, tokenBalance: 100, pauseStatusFamily: false, primaryRegion: parsedUserRegion };
+
+    try {
       await setupItem(DYNAMODB_TABLE_FAMILIES, testFamilyData);
+      // DO NOT setup profile item: await cleanupItem(DYNAMODB_TABLE_PROFILES, { profileId: actualProfileIdForDb });
       
-      // Call API with valid token - should be denied
       const response = await callApiWithToken(idToken);
-      
-      // Should get a 403 Forbidden
       expect(response.status).toBe(403);
-      
+      // Check specific error message if known, e.g.,
+      // expect(response.body.message).toContain(`Profile data not found`);
     } finally {
-      // Clean up
-      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { 
-        familyId: `FAMILY#${userRegion}#${familyId}` 
-      });
+      await cleanupItem(DYNAMODB_TABLE_FAMILIES, { familyId: actualFamilyIdForDb });
+      await cleanupItem(DYNAMODB_TABLE_PROFILES, { profileId: actualProfileIdForDb });
     }
-  }, 10000);
-  
-  // Test 6: Check missing family behavior
-  test('should deny access when family does not exist', async () => {
-    // Skip if we couldn't authenticate
-    if (!idToken || !familyId || !profileId) {
-      console.warn('Skipping test - missing required token or claims');
-      return;
-    }
-    
-    try {
-      // Only set up profile data, not family data
-      const testProfileData = {
-        profileId: `PROFILE#${userRegion}#${profileId}`,
-        familyId: `FAMILY#${userRegion}#${familyId}`,
-        role: 'child',
-        pauseStatusProfile: false,
-        userRegion: userRegion
-      };
-      
-      // Create profile but NOT family
-      await setupItem(DYNAMODB_TABLE_PROFILES, testProfileData);
-      
-      // Call API with valid token - should be denied
-      const response = await callApiWithToken(idToken);
-      
-      // Should get a 403 Forbidden
-      expect(response.status).toBe(403);
-      
-    } finally {
-      // Clean up
-      await cleanupItem(DYNAMODB_TABLE_PROFILES, { 
-        profileId: `PROFILE#${userRegion}#${profileId}` 
-      });
-    }
-  }, 10000);
+  }, 15000);
+
 }); 

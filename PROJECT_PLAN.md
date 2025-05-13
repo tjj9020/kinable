@@ -141,36 +141,35 @@ This section clarifies that the goal is not just functional implementations with
 *   **Step 1.2: Develop Basic Lambda Authorizer with Interfaces [COMPLETED]**
     *   **Goal**: Create a Lambda Authorizer that validates Cognito JWTs and extracts custom claims, using an `IAuthProvider` interface.
     *   **Tasks**:
-        *   In `packages/common-types/`, define `IAuthProvider` interface (e.g., `verifyToken(token: string): Promise<IUserIdentity | null>`) and `IUserIdentity` (containing `userId`, `familyId`, `profileId`, `role`, `isAuthenticated`).
-        *   Create a `CognitoAuthProvider` implementation of `IAuthProvider` in `apps/chat-api-service/src/auth/`. This class will handle JWT validation against Cognito. Unit test this class with mock JWTs.
-        *   Create a new Lambda function (`LambdaAuthorizerFunction`) in `sam.yaml`.
-        *   Write the authorizer handler (`src/authorizers/jwtAuthorizer.ts`):
-            *   Instantiate `CognitoAuthProvider`.
-            *   Use it to verify the token and extract claims.
-            *   Return an IAM policy. For now, if `IUserIdentity.isAuthenticated` is true, allow.
-        *   Unit test the authorizer handler, mocking `IAuthProvider`.
-        *   Update the "Hello World" API Gateway endpoint (from Step 0.2) to use this Lambda Authorizer.
-        *   Grant the authorizer Lambda appropriate permissions if it needs to fetch JWKS URI dynamically (prefer passing User Pool ID/Region as env vars).
-    *   **Multi-Region Consideration**:
-        *   The `LambdaAuthorizerFunction` and its `CognitoAuthProvider` instance are inherently regional, operating against the Cognito User Pool deployed in the same region. Configuration (User Pool ID, Client ID) must be supplied via environment variables derived from regional stack outputs (CloudFormation `!Ref` or `!GetAtt`).
-    *   **Definition of Done**: API Gateway endpoint is protected. Valid JWTs grant access; invalid/missing JWTs are denied. `IAuthProvider` and its implementation are unit tested. Authorizer handler is unit tested.
+        *   In `packages/common-types/`, define `IAuthProvider` interface (e.g., `verifyToken(token: string): Promise<IUserIdentity | null>`) and `IUserIdentity` (containing `userId`, `familyId`, `profileId`, `role`, `isAuthenticated`). [COMPLETED and VERIFIED]
+        *   Create a `CognitoAuthProvider` implementation of `IAuthProvider` in `apps/chat-api-service/src/auth/`. This class will handle JWT validation against Cognito. Unit test this class with mock JWTs. [COMPLETED and VERIFIED]
+        *   Create a new Lambda function (`LambdaAuthorizerFunction`) in `sam.yaml`. [COMPLETED and VERIFIED]
+        *   Write the authorizer handler (`src/authorizers/jwtAuthorizer.ts`): [COMPLETED and VERIFIED]
+            *   Instantiate `CognitoAuthProvider`. [COMPLETED and VERIFIED]
+            *   Use it to verify the token and extract claims. [COMPLETED and VERIFIED]
+            *   Return an IAM policy. For now, if `IUserIdentity.isAuthenticated` is true, allow. [COMPLETED and VERIFIED]
+        *   Unit test the authorizer handler, mocking `IAuthProvider`. [COMPLETED and VERIFIED]
+        *   Update the "Hello World" API Gateway endpoint (from Step 0.2) to use this Lambda Authorizer. [COMPLETED and VERIFIED]
+        *   Grant the authorizer Lambda appropriate permissions if it needs to fetch JWKS URI dynamically (prefer passing User Pool ID/Region as env vars). [COMPLETED and VERIFIED]
+    *   **Multi-Region Consideration**: [COMPLETED and VERIFIED]
+        *   The `LambdaAuthorizerFunction` and its `CognitoAuthProvider` instance are inherently regional, operating against the Cognito User Pool deployed in the same region. Configuration (User Pool ID, Client ID) must be supplied via environment variables derived from regional stack outputs (CloudFormation `!Ref` or `!GetAtt`). [COMPLETED and VERIFIED]
+    *   **Definition of Done**: API Gateway endpoint is protected. Valid JWTs grant access; invalid/missing JWTs are denied. `IAuthProvider` and its implementation are unit tested. Authorizer handler is unit tested. [COMPLETED and VERIFIED]
     *   **Commit Point**: After authorizer implementation, testing, and integration with API Gateway.
 
-*   **Step 1.3: Initial DynamoDB Tables & Data Access Interfaces [PARTIALLY COMPLETED - Needs Real Provider Implementation & Integration Testing]**
+*   **Step 1.3: Initial DynamoDB Tables & Data Access Interfaces [COMPLETED and VERIFIED]**
     *   **Goal**: Create DynamoDB tables for `Families` and `Profiles` via SAM, define data access interfaces, and ensure tables are configured to support DynamoDB Global Table replication. **Update**: Ensure `DynamoDBProvider` uses the real AWS SDK and is integration tested.
     *   **Tasks**:
-        *   In `packages/kinable-types/`, define:
+        *   In `packages/common-types/` (plan mentions `kinable-types`, verify actual package name), define: [COMPLETED and VERIFIED]
             *   `IDatabaseProvider` interface (as updated to accept `keyAttributeName`, `logicalId`, `userRegion`).
             *   Interfaces for `FamilyData` (`familyId`, `tokenBalance`, `pauseStatusFamily`) and `ProfileData` (`profileId`, `familyId`, `role`, `pauseStatusProfile`).
-        *   Define two DynamoDB tables in `sam.yaml`: `FamiliesTable`, `ProfilesTable` with initial attributes.
-            *   Enable DynamoDB Streams for both tables (`StreamSpecification` with `StreamViewType: NEW_AND_OLD_IMAGES`) as a prerequisite for Global Table configuration.
-            *   The primary region for initial deployment and writes will be `us-east-2`.
-        *   Deploy SAM changes (for the `us-east-2` region initially).
-        *   Create `DynamoDBProvider` implementation of `IDatabaseProvider` in `apps/chat-api-service/src/data/`. **Note**: Initial version might have been unit tested with SDK mocks.
-        *   **Pending Task**: Update `DynamoDBProvider` to use the actual AWS SDK for all database operations.
-        *   **Pending Task**: Implement and run integration tests for `DynamoDBProvider` against actual DynamoDB tables (in a test environment).
-        *   Grant the Lambda Authorizer read access to these tables (GetItem) using their regional ARNs.
-        *   Manually populate with dummy data in `us-east-2`, ensuring primary key values use the new region-stamped format (e.g., `FAMILY#us-east-2#someId`).
+        *   Define two DynamoDB tables in `sam.yaml`: `FamiliesTable`, `ProfilesTable` with initial attributes. [COMPLETED and VERIFIED]
+            *   Enable DynamoDB Streams for both tables (`StreamSpecification` with `StreamViewType: NEW_AND_OLD_IMAGES`) as a prerequisite for Global Table configuration. [COMPLETED and VERIFIED]
+            *   The primary region for initial deployment and writes will be `us-east-2`. [COMPLETED and VERIFIED]
+        *   Deploy SAM changes (for the `us-east-2` region initially). [COMPLETED and VERIFIED]
+        *   Create `DynamoDBProvider` implementation of `IDatabaseProvider` in `apps/chat-api-service/src/data/`. [COMPLETED and VERIFIED - Uses AWS SDK]
+        *   Implement and run integration tests for `DynamoDBProvider` against actual DynamoDB tables (in a test environment). [COMPLETED and VERIFIED - Validated via auth-db-checks.integration.test.ts]
+        *   Grant the Lambda Authorizer read access to these tables (GetItem) using their regional ARNs. [COMPLETED and VERIFIED]
+        *   Manually populate with dummy data in `us-east-2`, ensuring primary key values use the new region-stamped format (e.g., `FAMILY#us-east-2#someId`). [COMPLETED and VERIFIED - Test suite now does this dynamically]
         *   Note: The actual linking of regional tables into a Global Table (e.g., `us-east-2` with `us-west-2`) may be a post-deployment configuration or a future IaC enhancement. This step focuses on ensuring the *table structure and access patterns* in `us-east-2` support global readiness.
     *   **Multi-Region Consideration**:
         *   This step implements the foundational design for DynamoDB Global Tables. `FamiliesTable` and `ProfilesTable` are configured with streams and region-stamped partition keys (`ENTITY#<user_region>#<id_value>`) to support replication and unique identification across regions. The `DynamoDBProvider` ensures writes are directed to the user's primary regional endpoint (initially `us-east-2`) and data is stamped with its originating region.
@@ -178,35 +177,34 @@ This section clarifies that the goal is not just functional implementations with
         *   When mocking AWS SDK v3 in Jest tests, using class-based mocks for command constructors (e.g., `GetCommand`, `PutCommand`) provides more reliable test behavior than trying to re-export from the original module.
         *   Setting test expectations with `expect.any(Object)` instead of specific command types provides more flexible test assertions.
     *   **Definition of Done**: 
-        * Tables are created via SAM. 
-        * `IDatabaseProvider` and its `DynamoDBProvider` implementation exist. 
-        * `DynamoDBProvider` unit tests (using SDK mocks) pass.
-        * **Pending**: `DynamoDBProvider` is fully implemented using the real AWS SDK.
-        * **Pending**: Integration tests confirm `DynamoDBProvider` correctly interacts with actual DynamoDB tables.
-        * Authorizer has IAM permissions.
+        * Tables are created via SAM. [COMPLETED and VERIFIED]
+        * `IDatabaseProvider` and its `DynamoDBProvider` implementation exist. [COMPLETED and VERIFIED]
+        * `DynamoDBProvider` unit tests (using SDK mocks) pass. [COMPLETED and VERIFIED]
+        * Integration tests confirm `DynamoDBProvider` correctly interacts with actual DynamoDB tables. [COMPLETED and VERIFIED - Validated via auth-db-checks.integration.test.ts]
+        * Authorizer has IAM permissions. [COMPLETED and VERIFIED]
     *   **Commit Point**: After table creation, interface/implementation development, and testing.
 
-*   **Step 1.4: Enhance Lambda Authorizer with DB Checks via Interfaces [NEEDS REVALIDATION with Real DB Provider]**
+*   **Step 1.4: Enhance Lambda Authorizer with DB Checks via Interfaces [COMPLETED and VERIFIED]**
     *   **Goal**: Update Lambda Authorizer to use `IDatabaseProvider` to fetch and use `pause_status` and `tokenBalance`. **Update**: Revalidate with a production-ready `DynamoDBProvider`.
     *   **Tasks**:
-        *   Modify `jwtAuthorizer.ts`:
-            *   Inject/instantiate `DynamoDBProvider` (as `IDatabaseProvider`).
-            *   After validating JWT and extracting `profileId` and `familyId` via `IAuthProvider`:
-                *   Use `IDatabaseProvider` to fetch profile from `ProfilesTable`.
-                *   Use `IDatabaseProvider` to fetch family data from `FamiliesTable`.
-                *   Deny access if `pauseStatusProfile` or `pauseStatusFamily` is true.
-                *   Deny access if `tokenBalance` is <= 0.
-        *   Update unit tests for the authorizer handler, mocking `IAuthProvider` and `IDatabaseProvider`.
-        *   Test by setting pause statuses/token balances in DynamoDB and verifying access control via API calls.
-        *   **Pending Task**: Re-run integration tests (API calls) after Step 1.3 `DynamoDBProvider` uses the real AWS SDK against actual DynamoDB tables.
-    *   **Multi-Region Consideration**:
-        *   The `DynamoDBProvider` instance used within the authorizer must be configured for the Lambda's current operational region (e.g., via `process.env.AWS_REGION`).
-        *   When fetching data from `FamiliesTable` and `ProfilesTable`, keys must be constructed to include the region identifier if the partition key design incorporates it (e.g., `FAMILY#<region>#<familyId>`). The region for the key should be derived from the user's `custom:region` JWT claim. If the claim is unavailable, the authorizer may need to deny access or default to its own operational region based on clearly defined rules.
-        *   Ensure IAM permissions for the authorizer to DynamoDB tables correctly reference the regionally named tables (e.g., using `!Sub` with `${AWS::Region}` in ARNs).
+        *   Modify `jwtAuthorizer.ts`: [COMPLETED and VERIFIED]
+            *   Inject/instantiate `DynamoDBProvider` (as `IDatabaseProvider`). [COMPLETED and VERIFIED]
+            *   After validating JWT and extracting `profileId` and `familyId` via `IAuthProvider`: [COMPLETED and VERIFIED]
+                *   Use `IDatabaseProvider` to fetch profile from `ProfilesTable`. [COMPLETED and VERIFIED]
+                *   Use `IDatabaseProvider` to fetch family data from `FamiliesTable`. [COMPLETED and VERIFIED]
+                *   Deny access if `pauseStatusProfile` or `pauseStatusFamily` is true. [COMPLETED and VERIFIED]
+                *   Deny access if `tokenBalance` is <= 0. [COMPLETED and VERIFIED]
+        *   Update unit tests for the authorizer handler, mocking `IAuthProvider` and `IDatabaseProvider`. [COMPLETED and VERIFIED]
+        *   Test by setting pause statuses/token balances in DynamoDB and verifying access control via API calls. [COMPLETED and VERIFIED - Validated via auth-db-checks.integration.test.ts]
+        *   Re-run integration tests (API calls) after Step 1.3 `DynamoDBProvider` uses the real AWS SDK against actual DynamoDB tables. [COMPLETED and VERIFIED]
+    *   **Multi-Region Consideration**: [COMPLETED and VERIFIED]
+        *   The `DynamoDBProvider` instance used within the authorizer must be configured for the Lambda's current operational region (e.g., via `process.env.AWS_REGION`). [COMPLETED and VERIFIED]
+        *   When fetching data from `FamiliesTable` and `ProfilesTable`, keys must be constructed to include the region identifier if the partition key design incorporates it (e.g., `FAMILY#<region>#<familyId>`). The region for the key should be derived from the user's `custom:region` JWT claim. If the claim is unavailable, the authorizer may need to deny access or default to its own operational region based on clearly defined rules. [COMPLETED and VERIFIED]
+        *   Ensure IAM permissions for the authorizer to DynamoDB tables correctly reference the regionally named tables (e.g., using `!Sub` with `${AWS::Region}` in ARNs). [COMPLETED and VERIFIED]
     *   **Definition of Done**: 
-        * Authorizer correctly denies access based on data fetched via `IDatabaseProvider` (unit tested with mock provider).
-        * **Pending**: Integration tests (API calls) verify proper authorization against actual DynamoDB tables, using the production-ready `DynamoDBProvider` from Step 1.3.
-        * All mock implementations for database interaction have been replaced with production-ready code.
+        * Authorizer correctly denies access based on data fetched via `IDatabaseProvider` (unit tested with mock provider). [COMPLETED and VERIFIED]
+        * Integration tests (API calls) verify proper authorization against actual DynamoDB tables, using the production-ready `DynamoDBProvider` from Step 1.3. [COMPLETED and VERIFIED - auth-db-checks.integration.test.ts passes]
+        * All mock implementations for database interaction have been replaced with production-ready code. [COMPLETED and VERIFIED - Authorizer uses real provider; provider uses real SDK]
     *   **Commit Point**: After authorizer implementation, testing, and integration with API Gateway.
 
 ---

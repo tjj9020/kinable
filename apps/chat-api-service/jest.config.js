@@ -1,5 +1,4 @@
 module.exports = {
-  preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: [
@@ -9,7 +8,7 @@ module.exports = {
   transform: {
     '^.+\.(ts|tsx)$': ['ts-jest', {
       // ts-jest configuration options
-      tsconfig: 'tsconfig.json' // Or tsconfig.test.json if you have a specific one
+      tsconfig: 'tsconfig.test.json' // Use the test-specific config
     }]
   },
   moduleNameMapper: {

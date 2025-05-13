@@ -14,6 +14,32 @@ jest.mock('../ai/AIModelRouter', () => {
   };
 });
 
+/**
+ * Helper function to create a mock API Gateway event
+ */
+const createMockEvent = (body: Record<string, any> = {}, authorizer: Record<string, any> | null = {}): APIGatewayProxyEvent => {
+  return {
+    body: JSON.stringify(body),
+    requestContext: {
+      requestId: 'test-request-id',
+      authorizer
+    },
+    headers: {
+      'X-Amzn-Trace-Id': 'test-trace-id'
+    },
+    // All other required properties not used in tests
+    pathParameters: null,
+    queryStringParameters: null,
+    multiValueQueryStringParameters: null,
+    multiValueHeaders: {},
+    stageVariables: null,
+    resource: '/chat',
+    path: '/chat',
+    httpMethod: 'POST',
+    isBase64Encoded: false
+  } as unknown as APIGatewayProxyEvent; // Cast through unknown to avoid TypeScript errors
+};
+
 describe('ChatRouter Handler', () => {
   let mockEvent: APIGatewayProxyEvent;
   let mockRouteRequest: jest.Mock;
@@ -30,30 +56,25 @@ describe('ChatRouter Handler', () => {
     });
     
     // Create a mock event
-    mockEvent = {
-      body: JSON.stringify({
+    mockEvent = createMockEvent(
+      {
         prompt: 'Hello, world!',
         maxTokens: 100,
         temperature: 0.7
-      }),
-      requestContext: {
-        requestId: 'test-request-id',
-        authorizer: {
-          sub: 'test-user',
-          familyId: 'test-family',
-          profileId: 'test-profile'
-        }
       },
-      headers: {
-        'X-Amzn-Trace-Id': 'test-trace-id'
+      {
+        sub: 'test-user',
+        familyId: 'test-family',
+        profileId: 'test-profile'
       }
-    } as unknown as APIGatewayProxyEvent;
+    );
     
     // Set environment variable
     process.env.AWS_REGION = 'us-east-2';
   });
   
   test('should return 400 when request body is missing', async () => {
+    // Modify the event for this test
     const eventWithoutBody = { ...mockEvent, body: null };
     
     const response = await handler(eventWithoutBody);
@@ -74,12 +95,14 @@ describe('ChatRouter Handler', () => {
   });
   
   test('should return 400 when prompt is missing', async () => {
-    const eventWithoutPrompt = { 
-      ...mockEvent,
-      body: JSON.stringify({
-        maxTokens: 100
-      })
-    };
+    const eventWithoutPrompt = createMockEvent(
+      { maxTokens: 100 },
+      {
+        sub: 'test-user',
+        familyId: 'test-family',
+        profileId: 'test-profile'
+      }
+    );
     
     const response = await handler(eventWithoutPrompt);
     
@@ -182,13 +205,10 @@ describe('ChatRouter Handler', () => {
   
   test('should handle missing authorizer context', async () => {
     // Create an event with missing authorizer
-    const eventWithoutAuthorizer = {
-      ...mockEvent,
-      requestContext: {
-        requestId: 'test-request-id',
-        authorizer: null
-      }
-    };
+    const eventWithoutAuthorizer = createMockEvent(
+      { prompt: 'Hello with no auth!' },
+      null
+    );
     
     // Mock successful response
     mockRouteRequest.mockResolvedValue({
@@ -219,12 +239,14 @@ describe('ChatRouter Handler', () => {
   
   test('should use default values when optional parameters are missing', async () => {
     // Create event with minimal request body
-    const minimalEvent = {
-      ...mockEvent,
-      body: JSON.stringify({
-        prompt: 'Minimal request'
-      })
-    };
+    const minimalEvent = createMockEvent(
+      { prompt: 'Minimal request' },
+      {
+        sub: 'test-user',
+        familyId: 'test-family',
+        profileId: 'test-profile'
+      }
+    );
     
     // Mock successful response
     mockRouteRequest.mockResolvedValue({

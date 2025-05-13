@@ -46,6 +46,46 @@
     *   All authorization and data operations remain region-local by default.
     *   Interfaces should be designed to accommodate region-specific implementations or configurations.
 
+## Mock vs. Production Implementation Requirements
+
+To ensure we maintain a clear distinction between mock implementations used for initial development and the production-ready implementations required for completion, we establish the following guidelines:
+
+1. **Implementation Stages**:
+   * **Initial Development**: Interface implementations may use mocks or stubs for rapid development and testing.
+   * **Completion Requirements**: Before any step is considered complete, all mock implementations must be replaced with real service integrations.
+
+2. **Mock Implementation Guidelines**:
+   * All mock implementations must be clearly marked with comments (e.g., `// MOCK: This is a temporary mock implementation`).
+   * Mock implementations should closely simulate the behavior of real services, including error conditions.
+   * Mock implementations may be used for initial development, unit testing, and interface validation.
+
+3. **Production Implementation Requirements**:
+   * **API Providers**: Must use actual SDKs and APIs, not simulated responses:
+     * OpenAI provider must use the OpenAI SDK and real API keys from Secrets Manager
+     * Anthropic provider must use the Anthropic SDK with actual API authentication
+   * **Configuration**: Must use actual AWS services, not in-memory defaults:
+     * Configuration must be fetched from and stored in DynamoDB
+     * Secrets must be retrieved from AWS Secrets Manager
+   * **Database Operations**: Must execute against actual databases:
+     * DynamoDB provider must use the AWS SDK to perform real operations
+     * Key construction and GSI queries must work with actual tables
+   * **Circuit Breakers**: Must persist state in actual data stores:
+     * Circuit breaker state must be stored in DynamoDB, not in-memory
+     * Health checks must use CloudWatch metrics from real service calls
+
+4. **Testing Requirements**:
+   * **Unit Tests**: Focus on isolated logic. Should use mocks/stubs for external dependencies (e.g., AWS SDK, third-party APIs, other internal services not under test) to ensure speed and reliability. Unit tests DO NOT interact with real infrastructure.
+   * **Integration Tests**: Verify interactions between components and with real external services or infrastructure (e.g., `DynamoDBProvider` communicating with an actual DynamoDB table, `OpenAIModelProvider` calling the real OpenAI API). These tests will run against test-specific instances or sandboxed environments.
+   * **End-to-End (E2E) Tests**: Validate the entire application flow from the user's perspective, using all real services and infrastructure in a deployed environment.
+   * **Deployment Verification**: Must include scripts or manual checks to verify real service integrations post-deployment.
+
+5. **Definition of Done Clarification**:
+   * No step is considered "COMPLETED" unless all mock implementations have been replaced with production-ready code.
+   * Integration tests must validate actual service interactions, not just functional requirements.
+   * Documentation must clearly describe connections to real services, not just interface contracts.
+
+This section clarifies that the goal is not just functional implementations with mocks, but fully integrated, production-ready components that work with actual AWS services and third-party APIs.
+
 ---
 
 ## Phased Implementation Plan
@@ -101,7 +141,7 @@
 *   **Step 1.2: Develop Basic Lambda Authorizer with Interfaces [COMPLETED]**
     *   **Goal**: Create a Lambda Authorizer that validates Cognito JWTs and extracts custom claims, using an `IAuthProvider` interface.
     *   **Tasks**:
-        *   In `packages/common-types/` (or a dedicated auth package), define `IAuthProvider` interface (e.g., `verifyToken(token: string): Promise<IUserIdentity | null>`) and `IUserIdentity` (containing `userId`, `familyId`, `profileId`, `role`, `isAuthenticated`).
+        *   In `packages/common-types/`, define `IAuthProvider` interface (e.g., `verifyToken(token: string): Promise<IUserIdentity | null>`) and `IUserIdentity` (containing `userId`, `familyId`, `profileId`, `role`, `isAuthenticated`).
         *   Create a `CognitoAuthProvider` implementation of `IAuthProvider` in `apps/chat-api-service/src/auth/`. This class will handle JWT validation against Cognito. Unit test this class with mock JWTs.
         *   Create a new Lambda function (`LambdaAuthorizerFunction`) in `sam.yaml`.
         *   Write the authorizer handler (`src/authorizers/jwtAuthorizer.ts`):
@@ -116,22 +156,19 @@
     *   **Definition of Done**: API Gateway endpoint is protected. Valid JWTs grant access; invalid/missing JWTs are denied. `IAuthProvider` and its implementation are unit tested. Authorizer handler is unit tested.
     *   **Commit Point**: After authorizer implementation, testing, and integration with API Gateway.
 
-*   **Step 1.3: Initial DynamoDB Tables & Data Access Interfaces [COMPLETED]**
-    *   **Goal**: Create DynamoDB tables for `Families` and `Profiles` via SAM, define data access interfaces, and ensure tables are configured to support DynamoDB Global Table replication.
+*   **Step 1.3: Initial DynamoDB Tables & Data Access Interfaces [PARTIALLY COMPLETED - Needs Real Provider Implementation & Integration Testing]**
+    *   **Goal**: Create DynamoDB tables for `Families` and `Profiles` via SAM, define data access interfaces, and ensure tables are configured to support DynamoDB Global Table replication. **Update**: Ensure `DynamoDBProvider` uses the real AWS SDK and is integration tested.
     *   **Tasks**:
-        *   In `packages/kinable-types/` (or a dedicated data package), define:
+        *   In `packages/kinable-types/`, define:
             *   `IDatabaseProvider` interface (as updated to accept `keyAttributeName`, `logicalId`, `userRegion`).
             *   Interfaces for `FamilyData` (`familyId`, `tokenBalance`, `pauseStatusFamily`) and `ProfileData` (`profileId`, `familyId`, `role`, `pauseStatusProfile`).
         *   Define two DynamoDB tables in `sam.yaml`: `FamiliesTable`, `ProfilesTable` with initial attributes.
             *   Enable DynamoDB Streams for both tables (`StreamSpecification` with `StreamViewType: NEW_AND_OLD_IMAGES`) as a prerequisite for Global Table configuration.
             *   The primary region for initial deployment and writes will be `us-east-2`.
         *   Deploy SAM changes (for the `us-east-2` region initially).
-        *   Create `DynamoDBProvider` implementation of `IDatabaseProvider` in `apps/chat-api-service/src/data/`.
-            *   The `DynamoDBProvider` constructor will accept the AWS SDK client region (e.g., the user's primary write region like `us-east-2`).
-            *   Methods like `getItem`, `putItem`, etc., will accept `keyAttributeName`, `logicalId`, and `userRegion` (the user's designated home region, e.g., `us-east-2` or `us-west-2`).
-            *   The provider will construct partition key *values* by embedding the `userRegion` directly into the key string (e.g., `FAMILY#<userRegion>#<logicalId>` for `FamiliesTable`, `PROFILE#<userRegion>#<logicalId>` for `ProfilesTable`). This stamped key is what's stored in DynamoDB.
-            *   Writes will be directed to the regional endpoint configured in the provider's constructor (primary write region), and Global Tables will handle replication to other regions (e.g., `us-west-2`).
-        *   Unit test `DynamoDBProvider` with mocks for the AWS SDK, verifying regionalized key construction and usage.
+        *   Create `DynamoDBProvider` implementation of `IDatabaseProvider` in `apps/chat-api-service/src/data/`. **Note**: Initial version might have been unit tested with SDK mocks.
+        *   **Pending Task**: Update `DynamoDBProvider` to use the actual AWS SDK for all database operations.
+        *   **Pending Task**: Implement and run integration tests for `DynamoDBProvider` against actual DynamoDB tables (in a test environment).
         *   Grant the Lambda Authorizer read access to these tables (GetItem) using their regional ARNs.
         *   Manually populate with dummy data in `us-east-2`, ensuring primary key values use the new region-stamped format (e.g., `FAMILY#us-east-2#someId`).
         *   Note: The actual linking of regional tables into a Global Table (e.g., `us-east-2` with `us-west-2`) may be a post-deployment configuration or a future IaC enhancement. This step focuses on ensuring the *table structure and access patterns* in `us-east-2` support global readiness.
@@ -140,11 +177,17 @@
     *   **Learnings**:
         *   When mocking AWS SDK v3 in Jest tests, using class-based mocks for command constructors (e.g., `GetCommand`, `PutCommand`) provides more reliable test behavior than trying to re-export from the original module.
         *   Setting test expectations with `expect.any(Object)` instead of specific command types provides more flexible test assertions.
-    *   **Definition of Done**: Tables are created via SAM. `IDatabaseProvider` and its `DynamoDBProvider` implementation exist and are unit tested. Authorizer has IAM permissions.
+    *   **Definition of Done**: 
+        * Tables are created via SAM. 
+        * `IDatabaseProvider` and its `DynamoDBProvider` implementation exist. 
+        * `DynamoDBProvider` unit tests (using SDK mocks) pass.
+        * **Pending**: `DynamoDBProvider` is fully implemented using the real AWS SDK.
+        * **Pending**: Integration tests confirm `DynamoDBProvider` correctly interacts with actual DynamoDB tables.
+        * Authorizer has IAM permissions.
     *   **Commit Point**: After table creation, interface/implementation development, and testing.
 
-*   **Step 1.4: Enhance Lambda Authorizer with DB Checks via Interfaces [COMPLETED]**
-    *   **Goal**: Update Lambda Authorizer to use `IDatabaseProvider` to fetch and use `pause_status` and `tokenBalance`.
+*   **Step 1.4: Enhance Lambda Authorizer with DB Checks via Interfaces [NEEDS REVALIDATION with Real DB Provider]**
+    *   **Goal**: Update Lambda Authorizer to use `IDatabaseProvider` to fetch and use `pause_status` and `tokenBalance`. **Update**: Revalidate with a production-ready `DynamoDBProvider`.
     *   **Tasks**:
         *   Modify `jwtAuthorizer.ts`:
             *   Inject/instantiate `DynamoDBProvider` (as `IDatabaseProvider`).
@@ -155,19 +198,23 @@
                 *   Deny access if `tokenBalance` is <= 0.
         *   Update unit tests for the authorizer handler, mocking `IAuthProvider` and `IDatabaseProvider`.
         *   Test by setting pause statuses/token balances in DynamoDB and verifying access control via API calls.
+        *   **Pending Task**: Re-run integration tests (API calls) after Step 1.3 `DynamoDBProvider` uses the real AWS SDK against actual DynamoDB tables.
     *   **Multi-Region Consideration**:
         *   The `DynamoDBProvider` instance used within the authorizer must be configured for the Lambda's current operational region (e.g., via `process.env.AWS_REGION`).
         *   When fetching data from `FamiliesTable` and `ProfilesTable`, keys must be constructed to include the region identifier if the partition key design incorporates it (e.g., `FAMILY#<region>#<familyId>`). The region for the key should be derived from the user's `custom:region` JWT claim. If the claim is unavailable, the authorizer may need to deny access or default to its own operational region based on clearly defined rules.
         *   Ensure IAM permissions for the authorizer to DynamoDB tables correctly reference the regionally named tables (e.g., using `!Sub` with `${AWS::Region}` in ARNs).
-    *   **Definition of Done**: Authorizer correctly denies access based on data fetched via `IDatabaseProvider`. Unit tests updated and pass.
-    *   **Commit Point**: After authorizer enhancements and thorough testing.
+    *   **Definition of Done**: 
+        * Authorizer correctly denies access based on data fetched via `IDatabaseProvider` (unit tested with mock provider).
+        * **Pending**: Integration tests (API calls) verify proper authorization against actual DynamoDB tables, using the production-ready `DynamoDBProvider` from Step 1.3.
+        * All mock implementations for database interaction have been replaced with production-ready code.
+    *   **Commit Point**: After authorizer implementation, testing, and integration with API Gateway.
 
 ---
 
 ### **Phase 2: Core Chat Functionality**
 
-*   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces [COMPLETED 2025-05-13]**
-    *   **Goal**: Create a Lambda that uses a flexible `IAIModelProvider` interface architecture to send prompts to AI models and return responses, with initial support for one provider but designed for multi-provider and multi-region support.
+*   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces [PARTIALLY COMPLETED - Critical Mocks in Use for AI Provider & Config]**
+    *   **Goal**: Create a Lambda that uses a flexible `IAIModelProvider` interface architecture to send prompts to AI models and return responses. **Update**: Replace mocked AI calls and configuration with real implementations.
     *   **Tasks**:
         *   In `packages/common-types/`, define comprehensive interfaces:
             *   `IAIModelProvider` interface with core methods:
@@ -186,11 +233,12 @@
                 * Performance: `latency`, `timestamp`, `region`
         *   Create a robust provider architecture in `apps/chat-api-service/src/ai/`:
             *   `BaseAIModelProvider` abstract class with shared functionality
-            *   `OpenAIModelProvider` concrete implementation (initial provider)
-            *   `ConfigurationService` for managing provider configurations, with:
-                * Version tracking for configuration objects
-                * Support for dual-key periods during key rotation
-                * Region-specific endpoint configurations
+            *   `OpenAIModelProvider` concrete implementation (initial provider). **Note**: Current implementation uses mocked API calls.
+            *   `ConfigurationService` for managing provider configurations. **Note**: Current implementation uses in-memory default config.
+            *   **Pending Task**: Update `OpenAIModelProvider` to use the actual OpenAI SDK, making real API calls.
+            *   **Pending Task**: Update `ConfigurationService` to fetch configuration from the actual `ProviderConfiguration` DynamoDB table and cache it.
+            *   **Pending Task**: Ensure API keys for OpenAI are securely retrieved from AWS Secrets Manager by the `OpenAIModelProvider`.
+            *   **Pending Task**: Implement and run integration tests for `OpenAIModelProvider` (real API calls) and `ConfigurationService` (real DynamoDB interaction).
             *   `AIModelRouter` for future provider selection with:
                 * Simple initial implementation focused on a single provider
                 * Design for future capabilities including failover, cost optimization, feature matching
@@ -226,28 +274,23 @@
         *   Store provider endpoint latency and availability metrics by region
         *   Design configuration schema to support region-specific settings
     *   **Definition of Done (Initial)**: 
-        *   `/v1/chat` endpoint successfully returns AI responses from a single provider
-        *   Complete abstraction layer that will support multiple providers
-        *   Configuration management system ready for future providers
-        *   Unit tests validate both current functionality and extensibility
+        *   Abstraction layer for multiple providers is in place.
+        *   Unit tests (using mocks for OpenAI SDK and DynamoDB) for `OpenAIModelProvider` and `ConfigurationService` pass.
+        *   **Pending**: `/v1/chat` endpoint successfully returns AI responses using the real OpenAI API via the updated `OpenAIModelProvider`.
+        *   **Pending**: Configuration management system uses the actual `ProviderConfiguration` DynamoDB table, not mock data, via the updated `ConfigurationService`.
+        *   **Pending**: API keys are retrieved from AWS Secrets Manager by the `OpenAIModelProvider`.
+        *   **Pending**: Integration tests confirm real API communication with OpenAI and real DynamoDB interaction for configuration.
     *   **Commit Point**: After chat router implementation, interface/provider development, and testing.
     *   **Lessons Learned**:
         *   When deploying serverless applications with monorepo workspace dependencies, special care is needed to properly bundle dependencies instead of relying on symlinks which don't work in AWS Lambda.
         *   Custom build scripts can help ensure proper packaging of dependencies.
 
-*   **Step 2.1.1: Initial End-to-End Validation of Chat Router [COMPLETED 2025-05-13]**
-    *   **Goal**: Confirm that the deployed `/v1/chat` endpoint (from Step 2.1) is fully functional by performing an end-to-end test. This includes JWT authentication, request routing through `ChatRouterFunction`, interaction with `IAIModelProvider` (single provider like OpenAI), API key retrieval, and receiving a valid response from the AI model.
+*   **Step 2.1.1: Initial End-to-End Validation of Chat Router [NEEDS RE-VALIDATION after Step 2.1 is fully implemented]**
+    *   **Goal**: Confirm that the deployed `/v1/chat` endpoint is fully functional with real backend services. **Update**: Re-run E2E tests after Step 2.1 uses real AI provider and config service.
     *   **Tasks**:
-        *   Ensure the target environment (e.g., `kinable-dev`) is deployed with all components from Step 2.1, including a correctly configured and valid API key for the selected AI provider.
-        *   Obtain a valid Cognito JWT for a test user.
-        *   Send a POST request to the `/v1/chat` endpoint with the JWT and a sample prompt.
-        *   Verify a successful (e.g., HTTP 200) response containing the AI-generated text.
-        *   Troubleshoot any errors by checking CloudWatch logs for the `LambdaAuthorizerFunction` and `ChatRouterFunction`.
-    *   **Definition of Done**: A documented successful end-to-end test run, with the `/v1/chat` endpoint returning a valid AI response to an authenticated request. Any issues encountered during the initial test are diagnosed and resolved.
-    *   **Commit Point**: After successful validation and any necessary fixes.
-    *   **Lessons Learned**:
-        *   Integration tests should be designed to work with both mock and real API responses by checking for expected response structure rather than specific response content.
-        *   Proper deployment scripting ensures reproducible deployments and simplifies testing.
+        *   **Pending Task**: Re-execute E2E tests once `OpenAIModelProvider` uses the real OpenAI API & API key from Secrets Manager, and `ConfigurationService` uses real DynamoDB.
+        *   Verify a successful (e.g., HTTP 200) response containing an actual AI-generated text from OpenAI.
+    *   **Definition of Done**: A documented successful end-to-end test run, with the `/v1/chat` endpoint returning a valid AI response from the real OpenAI API to an authenticated request, using configuration from the real DynamoDB table. Any issues encountered during the re-test are diagnosed and resolved.
 
 *   **Step 2.2: Add Second AI Provider with Failover Capabilities [IN PROGRESS]**
     *   **Goal**: Extend the AI provider architecture to support a second provider (e.g., Anthropic Claude) with intelligent routing and failover capabilities.
@@ -289,10 +332,13 @@
         *   Implement region-specific fallback strategies
         *   Test cross-region failover scenarios
     *   **Definition of Done**: 
-        *   System successfully routes requests between two providers
-        *   Automatic failover when primary provider is unavailable
-        *   Cost-based routing working correctly
-        *   All tests pass including simulated outage scenarios
+        *   System successfully routes requests between two real providers (OpenAI and Anthropic, once Anthropic is implemented).
+        *   Automatic failover when primary provider is unavailable (tested against real provider health checks).
+        *   Circuit breaker state persisted in real DynamoDB, not in-memory.
+        *   Cost-based routing working correctly with real-time token costs (from real config).
+        *   Health checks using actual provider API calls.
+        *   All unit tests (with mocks) and integration/E2E tests (with real services) pass, including simulated outage scenarios.
+        *   All mock implementations replaced with production-ready code.
     *   **Commit Point**: After second provider implementation, enhanced routing, and failover testing.
     *   **Partially Completed**:
         *   Basic error handling and retry logic
@@ -342,11 +388,12 @@
         *   Support region-specific moderation rules
         *   Design for low-latency moderation in each region
     *   **Definition of Done**: 
-        *   Prompts are moderated via interfaces before reaching AI models
-        *   Content is filtered or blocked based on moderation results
+        *   Prompts are moderated via interfaces before reaching AI models using real moderation APIs
+        *   Content is filtered or blocked based on moderation results from actual services
         *   Family-specific and age-appropriate filtering works correctly
-        *   Moderation events are logged with region information
+        *   Moderation events are logged to real DynamoDB tables with region information
         *   Tests validate moderation effectiveness across different content types
+        *   No mock implementations remain in the production code
     *   **Commit Point**: After moderation implementation for prompts, testing.
 
 *   **Step 2.4: Moderation Engine Lambda (Post-Response) via Interfaces**
@@ -611,7 +658,12 @@ export interface AIModelError {
         *   Token ledger entries must include region information (e.g., as a separate attribute in the `TokenLedgerTable`).
         *   Billing operations (token deduction on `FamiliesTable` and logging to `TokenLedgerTable`) must be strictly isolated to the user's designated home region to maintain data integrity, adhering to the multi-region DynamoDB principles in Core Principle #6 (regionalized key values, write-locality).
         *   `TokenLedgerTable` should follow region-aware naming and its partition key strategy must align with Core Principle #6.
-    *   **Definition of Done**: Tokens deducted and logged via interfaces. Insufficient token scenarios handled. Unit tests pass.
+    *   **Definition of Done**: 
+        * Tokens deducted and logged via interfaces using real DynamoDB tables.
+        * Atomic updates work correctly with real transaction operations.
+        * Insufficient token scenarios handled correctly.
+        * All tests pass including integration tests with actual DynamoDB.
+        * No mock implementations remain in the production code.
     *   **Commit Point**: After billing/ledger implementation and testing.
 
 ---
@@ -626,7 +678,9 @@ export interface AIModelError {
         *   Create `apps/parent-dashboard/`. Scaffold React project (Vite/CRA with TypeScript).
         *   Setup basic routing. Configure build/lint/test scripts.
     *   **Multi-Region Consideration**: Client-side configuration for API endpoints (if not using a global router) should be region-aware. Cognito integration must support regional user pools.
-    *   **Definition of Done**: Basic React app runs locally, with build/test setup.
+    *   **Definition of Done**: 
+        * Basic React app runs locally, with build/test setup.
+        * Region-aware configuration architecture implemented.
     *   **Commit Point**: After initial React app setup.
 
 *   **Step 4.2: API Endpoints for Dashboard (User/Profile Listing) via Interfaces**
@@ -643,7 +697,11 @@ export interface AIModelError {
         *   Unit test handler, mocking `IDatabaseProvider`.
         *   Grant `GetFamilyProfilesFunction` read access to `ProfilesTable`.
     *   **Multi-Region Consideration**: API endpoints are inherently regional. Ensure any direct interaction with `IDatabaseProvider` respects regional data isolation.
-    *   **Definition of Done**: Guardian can get profiles via API. Child gets 403. Unit tests pass.
+    *   **Definition of Done**: 
+        * Guardian can get profiles via API with real DynamoDB queries. 
+        * Child gets 403. 
+        * Integration tests verify real database queries work correctly.
+        * Unit tests pass.
     *   **Commit Point**: After dashboard API endpoint implementation and testing.
 
 *   **Step 4.3: Frontend Integration for Profile Listing**
@@ -653,7 +711,10 @@ export interface AIModelError {
         *   Create a service/hook in React to call `/dashboard/profiles` with JWT.
         *   Display profiles in a component.
         *   Basic unit/integration tests for the React components.
-    *   **Definition of Done**: Logged-in guardian sees family profiles in the React app.
+    *   **Definition of Done**: 
+        * Logged-in guardian sees family profiles in the React app.
+        * Real Cognito authentication working, not mocked.
+        * Dashboard communicates with actual API endpoints.
     *   **Commit Point**: After frontend integration and display of profiles.
 
 *   **Step 4.4: Basic Child Chat Interface (MVP)**
@@ -664,7 +725,10 @@ export interface AIModelError {
         *   Display AI responses.
         *   Ensure it respects authentication and authorization from Phase 1.
     *   **Multi-Region Consideration**: Similar to Parent Dashboard: API endpoint configuration and Cognito integration should be region-aware.
-    *   **Definition of Done**: A child user can log in (via test credentials), send a prompt, and receive a moderated AI response. Basic token deduction is visible in `FamiliesTable`.
+    *   **Definition of Done**: 
+        * A child user can log in (via real Cognito credentials), send a prompt, and receive an actual AI response. 
+        * Token deduction is tracked in real DynamoDB tables.
+        * No mock implementations in any part of the flow.
     *   **Commit Point**: After basic child interface is functional and tested.
 
 ---
@@ -680,7 +744,10 @@ export interface AIModelError {
         *   Integrate existing `IModerationProvider` implementations as tasks within the Step Function.
         *   Update `ChatRouterFunction` to invoke this Step Function workflow instead of direct Lambda calls for moderation.
     *   **Multi-Region Consideration**: Step Function definition should be deployable per region. Interactions with other regional services (Lambdas, `ModerationLogTable`) must be region-contained. Use region-aware naming for the Step Function.
-    *   **Definition of Done**: Moderation flow is managed by Step Functions. Existing moderation capabilities are preserved. Unit tests for Step Function integration pass.
+    *   **Definition of Done**: 
+        * Moderation flow is managed by real AWS Step Functions, not simulated workflows.
+        * Existing moderation capabilities are preserved.
+        * Unit tests and integration tests with actual Step Functions verify expected behavior.
     *   **Commit Point**: After Step Function based moderation engine is implemented and tested.
 
 *   **Step 5.2: Readability Rewriter Service**
@@ -690,7 +757,10 @@ export interface AIModelError {
         *   Integrate the `ReadabilityRewriterService` as an optional step in the Moderation Step Function.
         *   Add controls in the Parent Dashboard for guardians to enable/configure readability settings per profile.
     *   **Multi-Region Consideration**: `IAIModelProvider` used by the rewriter should be region-aware. Any data storage/logging specific to readability should be regional.
-    *   **Definition of Done**: AI responses can be automatically simplified based on profile settings. Parent dashboard controls are functional.
+    *   **Definition of Done**: 
+        * AI responses can be automatically simplified based on profile settings using a real AI provider.
+        * Parent dashboard controls are functional and persist settings to actual database.
+        * No mock implementations remain in production code.
     *   **Commit Point**: After Readability Rewriter is implemented and integrated.
 
 *   **Step 5.3: Advanced Moderation Rules & Enhanced Logging**
@@ -700,7 +770,10 @@ export interface AIModelError {
         *   Integrate this engine into the `IModerationProvider` or directly into the Step Function workflow.
         *   Expand `ModerationLogTable` schema to include more detailed context about flagged content and applied rules (e.g., rule ID, matched content snippet).
     *   **Multi-Region Consideration**: `ModerationLogTable` is already noted to be region-aware. Custom rules, if stored (e.g., in DynamoDB or config files), should be manageable per region.
-    *   **Definition of Done**: Custom moderation rules are active and integrated. Logs provide comprehensive audit trails for moderation events.
+    *   **Definition of Done**: 
+        * Custom moderation rules are active and integrated with real rule storage.
+        * Logs provide comprehensive audit trails for moderation events in actual DynamoDB tables.
+        * Integration tests validate rule evaluation with various content types.
     *   **Commit Point**: After advanced moderation rules and logging are implemented.
 
 ---
@@ -717,7 +790,10 @@ export interface AIModelError {
         *   Modify `LambdaAuthorizerFunction` (or create a dedicated policy evaluation service/Lambda) to make authorization decisions based on AVP.
         *   (Future sub-task) Build UI components in Parent Dashboard for managing relevant policy aspects if applicable.
     *   **Multi-Region Consideration**: Each region must use its own AVP policy store. Define all Cedar policies as code and deploy them per region. Use region-aware naming for Policy Stores.
-    *   **Definition of Done**: Access control for defined actions is governed by Cedar policies in AVP. Unit tests for policy enforcement pass.
+    *   **Definition of Done**: 
+        * Access control for defined actions is governed by real Cedar policies in actual AVP policy stores.
+        * Integration tests verify policy enforcement works correctly with various user scenarios.
+        * No mock policy evaluation in production code.
     *   **Commit Point**: After AVP integration and initial policy setup.
 
 *   **Step 6.2: Notification System (SNS/SES)**
@@ -728,7 +804,10 @@ export interface AIModelError {
         *   Integrate event publishing into relevant services (e.g., `BillingLedgerFunction` for token warnings, `ModerationEngine` Step Function for flags).
         *   Add notification preferences in the Parent Dashboard (e.g., opt-in/out for certain notification types).
     *   **Multi-Region Consideration**: SNS Topics and SES configurations are regional. Notifications should be triggered and sent from the user's primary region. Manage templates per region if they have regional content.
-    *   **Definition of Done**: Users receive notifications for configured events based on their preferences.
+    *   **Definition of Done**: 
+        * Users receive real notifications for configured events based on their preferences.
+        * Integration tests verify correct delivery of notifications through actual SNS/SES.
+        * Regional isolation is properly maintained.
     *   **Commit Point**: After notification system is implemented and tested.
 
 ---
@@ -745,7 +824,10 @@ export interface AIModelError {
         *   Update `FamiliesTable` (e.g., `tokenBalance`, `subscriptionStatus`) and potentially a new `BillingEventsTable` based on Stripe events.
         *   Develop UI in Parent Dashboard for managing subscriptions (view, upgrade, cancel), viewing billing history, and purchasing booster packs.
     *   **Multi-Region Consideration**: Stripe is global, but webhook Lambda handlers are regional. DB updates must target regional tables. `BillingEventsTable` (if created) needs region-aware naming and partitioning strategy. Ensure idempotency in webhook handlers.
-    *   **Definition of Done**: End-to-end Stripe billing flow is operational for subscriptions and booster packs. Parent dashboard provides billing management.
+    *   **Definition of Done**: 
+        * End-to-end Stripe billing flow is operational for subscriptions and booster packs using real Stripe API.
+        * Parent dashboard provides billing management with actual subscription data.
+        * All transactions correctly update real DynamoDB tables.
     *   **Commit Point**: After full Stripe integration and dashboard UI.
 
 *   **Step 7.2: WebSocket API for Real-time Chat**
@@ -757,7 +839,10 @@ export interface AIModelError {
         *   Modify the `ChatService` (or its Step Function workflow) to broadcast messages to connected clients of a given profile/family after AI response and moderation.
         *   Update client applications (Parent and Child) to establish WebSocket connections and send/receive chat messages via WebSockets.
     *   **Multi-Region Consideration**: API Gateway WebSocket APIs are regional. Connection management (e.g., connection ID table) must be regional. Message broadcasting should occur within the user's region.
-    *   **Definition of Done**: Chat messages are delivered in real-time via WebSockets to appropriate clients. Connection handling is robust.
+    *   **Definition of Done**: 
+        * Chat messages are delivered in real-time via actual WebSockets to appropriate clients.
+        * Connection handling is robust with real connection tracking in DynamoDB.
+        * Regional isolation is maintained with proper failover capability.
     *   **Commit Point**: After WebSocket API and client integration.
 
 ---
@@ -789,8 +874,3 @@ export interface AIModelError {
 ---
 
 This project plan will be stored as `PROJECT_PLAN.md` in the root of the `kinable` repository.
-
-**Next Steps:**
-
-Shall we begin with **Phase 0, Step 0.1: Verify Monorepo and Tooling Setup**?
-Or would you like to refine any part of this plan further? 

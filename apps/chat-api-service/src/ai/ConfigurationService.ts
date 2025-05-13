@@ -39,27 +39,29 @@ export class ConfigurationService {
   public async getConfiguration(): Promise<ProviderConfiguration> {
     const now = Date.now();
     
-    // Check if we need to refresh the cache
-    if (now - this.lastFetched > this.cacheTtlMs) {
-      try {
-        // In production, this would fetch from DynamoDB
-        // For now, we'll just return the default configuration
-        const newConfig = await this.fetchConfiguration();
-        
-        // Validate configuration
-        const errors = validateConfiguration(newConfig);
-        if (errors.length > 0) {
-          console.error('Configuration validation failed:', errors);
-          // Keep using the current config if the new one is invalid
-        } else {
-          this.config = newConfig;
-        }
-        
-        this.lastFetched = now;
-      } catch (error) {
-        console.error('Failed to fetch configuration:', error);
-        // Continue using the current configuration
+    // Check if cache is still valid
+    if (this.lastFetched > 0 && now - this.lastFetched <= this.cacheTtlMs) {
+      // Use cached config
+      return this.config;
+    }
+    
+    try {
+      // Cache is expired or not initialized, fetch new config
+      const newConfig = await this.fetchConfiguration();
+      
+      // Validate configuration
+      const errors = validateConfiguration(newConfig);
+      if (errors.length > 0) {
+        console.error('Configuration validation failed:', errors);
+        // Keep using the current config if the new one is invalid
+      } else {
+        this.config = newConfig;
       }
+      
+      this.lastFetched = now;
+    } catch (error) {
+      console.error('Failed to fetch configuration:', error);
+      // Continue using the current configuration
     }
     
     return this.config;

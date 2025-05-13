@@ -53,6 +53,16 @@ export abstract class BaseAIModelProvider implements IAIModelProvider {
       return false;
     }
     
+    // Check if tools are provided but not supported
+    if (request.tools && request.tools.length > 0) {
+      const modelName = request.preferredModel || this.getDefaultModel();
+      const capabilities = this.getModelCapabilities(modelName);
+      
+      if (!capabilities.functionCalling) {
+        return false;
+      }
+    }
+    
     // Check model capabilities if specific capabilities requested
     if (request.requiredCapabilities && request.requiredCapabilities.length > 0) {
       const modelName = request.preferredModel || this.getDefaultModel();

@@ -2,6 +2,26 @@ import { OpenAIModelProvider } from './OpenAIModelProvider';
 import { AIModelRequest } from '../../../../packages/common-types/src/ai-interfaces';
 import { RequestContext } from '../../../../packages/common-types/src/core-interfaces';
 
+// Extended test class to access protected methods
+class TestOpenAIModelProvider extends OpenAIModelProvider {
+  constructor(apiKey: string) {
+    super(apiKey);
+  }
+  
+  // Expose protected properties for testing
+  public getApiKey(): string {
+    return this.apiKey;
+  }
+  
+  public getPreviousApiKey(): string | null {
+    return this.previousApiKey;
+  }
+  
+  public setApiKey(key: string): void {
+    this.apiKey = key;
+  }
+}
+
 // Mock callOpenAI
 jest.mock('./OpenAIModelProvider', () => {
   const original = jest.requireActual('./OpenAIModelProvider');
@@ -43,9 +63,11 @@ const mockContext: RequestContext = {
 
 describe('OpenAIModelProvider', () => {
   let provider: OpenAIModelProvider;
+  let testProvider: TestOpenAIModelProvider;
 
   beforeEach(() => {
     provider = new OpenAIModelProvider('test-api-key');
+    testProvider = new TestOpenAIModelProvider('test-api-key');
   });
 
   test('should initialize correctly', () => {
@@ -111,30 +133,34 @@ describe('OpenAIModelProvider', () => {
   });
 
   test('should update API key correctly', () => {
-    // const originalKey = 'test-api-key'; // Removed unused variable
     const newKey = 'new-test-api-key';
 
-    provider.updateApiKey(newKey);
+    testProvider.updateApiKey(newKey);
+    expect(testProvider.getApiKey()).toBe(newKey);
+    expect(testProvider.getPreviousApiKey()).toBe('test-api-key');
 
-    // We can't directly test private fields, but we can verify the provider still works
+    // We can also verify the provider still works
     const request: AIModelRequest = {
       prompt: 'Hello, world!',
       context: mockContext,
     };
 
-    expect(provider.canFulfill(request)).toBe(true);
+    expect(testProvider.canFulfill(request)).toBe(true);
   });
 
   test('should revert to previous API key if current key fails', async () => {
-    // const originalKey = 'test-api-key'; // Removed unused variable
     const newKey = 'new-test-api-key';
 
-    provider.updateApiKey(newKey);
+    testProvider.updateApiKey(newKey);
+    
+    // Verify we have a previous key saved
+    const previousKey = testProvider.getPreviousApiKey();
+    expect(previousKey).toBe('test-api-key');
 
-    // Try with previous key if available
-    if (provider.previousApiKey && provider.apiKey !== provider.previousApiKey) {
-      // const originalKey = provider.apiKey; // Removed unused variable
-      provider.apiKey = provider.previousApiKey;
+    // Test reverting to previous key
+    if (previousKey && testProvider.getApiKey() !== previousKey) {
+      const originalKey = testProvider.getApiKey();
+      testProvider.setApiKey(previousKey);
       
       try {
         const request: AIModelRequest = {
@@ -142,7 +168,7 @@ describe('OpenAIModelProvider', () => {
           context: mockContext,
         };
 
-        const result = await provider.generateResponse(request);
+        const result = await testProvider.generateResponse(request);
         
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -152,10 +178,7 @@ describe('OpenAIModelProvider', () => {
         }
       } catch (retryError) {
         // Revert to original key if retry failed
-        // Assuming provider.apiKey should revert. Need to know the original value.
-        // If originalKey was needed, the test logic requires adjustment.
-        // For now, removing the unused variable as reported.
-        // provider.apiKey = originalKey; // Cannot revert without storing originalKey
+        testProvider.setApiKey(originalKey);
       }
     }
   });

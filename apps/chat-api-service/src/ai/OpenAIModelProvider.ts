@@ -28,8 +28,8 @@ interface OpenAICompletionResponse {
  * Implementation of the AI model provider interface for OpenAI
  */
 export class OpenAIModelProvider extends BaseAIModelProvider {
-  private apiKey: string;
-  private previousApiKey: string | null = null;
+  protected apiKey: string;
+  protected previousApiKey: string | null = null;
   
   /**
    * Create a new OpenAI provider

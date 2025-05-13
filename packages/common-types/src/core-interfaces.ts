@@ -50,6 +50,7 @@ export interface FamilyData {
   // other family-wide settings can be added here
   createdAt?: string;
   updatedAt?: string;
+  primaryRegion?: string;   // Primary region for the family
 }
 
 export interface ProfileData {
@@ -61,6 +62,7 @@ export interface ProfileData {
   // other profile-specific settings
   createdAt?: string;
   updatedAt?: string;
+  userRegion?: string;      // User's region
 }
 
 // A generic type for key objects, typically used for DynamoDB operations

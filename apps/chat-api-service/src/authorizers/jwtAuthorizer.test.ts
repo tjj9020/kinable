@@ -191,7 +191,7 @@ describe('JWT Authorizer Lambda Handler', () => {
     // Verify expectations
     expect(response.principalId).toBe('test-user');
     expect(response.policyDocument.Statement[0].Effect).toBe('Allow');
-    expect(response.policyDocument.Statement[0].Resource).toBe(event.routeArn);
+    expect((response.policyDocument.Statement[0] as any).Resource).toBe(event.routeArn);
     expect(response.context).toEqual(mockUserIdentity);
     expect(mockVerifyToken).toHaveBeenCalledWith('valid-token');
   });

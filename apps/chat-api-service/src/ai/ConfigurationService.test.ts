@@ -11,18 +11,34 @@ jest.mock('@kinable/common-types', () => {
   };
 });
 
+// Mock instance to reset for each test
+let mockConfigService: ConfigurationService;
+
+// Create a real ConfigurationService for testing
+const OriginalConfigurationService = jest.requireActual('./ConfigurationService').ConfigurationService;
+
+// Mock getInstance to return our test instance
+jest.mock('./ConfigurationService', () => {
+  const original = jest.requireActual('./ConfigurationService');
+  return {
+    ...original,
+    ConfigurationService: {
+      ...original.ConfigurationService,
+      getInstance: jest.fn(() => mockConfigService)
+    }
+  };
+});
+
 describe('ConfigurationService', () => {
-  let configService: ConfigurationService;
-  
   beforeEach(() => {
     // Reset any mocked function calls
     jest.clearAllMocks();
     
-    // Get a fresh instance for each test
-    configService = ConfigurationService.getInstance();
+    // Create an instance directly using the original implementation
+    mockConfigService = OriginalConfigurationService.getInstance();
     
     // Set a short cache TTL for testing
-    configService.setCacheTtl(100);
+    mockConfigService.setCacheTtl(100);
     
     // Reset the validateConfiguration mock to return no errors
     (commonTypes.validateConfiguration as jest.Mock).mockReturnValue([]);
@@ -36,7 +52,7 @@ describe('ConfigurationService', () => {
   });
   
   test('getConfiguration should return a valid configuration', async () => {
-    const config = await configService.getConfiguration();
+    const config = await mockConfigService.getConfiguration();
     
     expect(config).toBeDefined();
     expect(config.version).toBe('1.0.0');
@@ -46,23 +62,51 @@ describe('ConfigurationService', () => {
   });
   
   test('configuration should be cached within the TTL period', async () => {
-    // Spy on the fetchConfiguration method
-    const fetchSpy = jest.spyOn(configService as any, 'fetchConfiguration');
+    // Create a mock implementation of fetchConfiguration
+    const mockFetchImplementation = jest.fn().mockImplementation(async () => {
+      // Return a basic configuration
+      return {
+        version: '1.0.0',
+        updatedAt: Date.now(),
+        providers: {
+          openai: {
+            active: true,
+            keyVersion: 1,
+            endpoints: {},
+            models: {},
+            rateLimits: { rpm: 10, tpm: 1000 },
+            retryConfig: { maxRetries: 1, initialDelayMs: 100, maxDelayMs: 1000 },
+            apiVersion: 'v1',
+            rolloutPercentage: 100
+          }
+        },
+        routing: {
+          rules: [],
+          weights: DEFAULT_ROUTING_WEIGHTS,
+          defaultProvider: 'openai',
+          defaultModel: 'gpt-4'
+        },
+        featureFlags: {}
+      };
+    });
+    
+    // Replace the actual fetchConfiguration with our mock
+    jest.spyOn(mockConfigService as any, 'fetchConfiguration').mockImplementation(mockFetchImplementation);
     
     // First call should fetch
-    await configService.getConfiguration();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await mockConfigService.getConfiguration();
+    expect(mockFetchImplementation).toHaveBeenCalledTimes(1);
     
     // Second call within TTL should use cache
-    await configService.getConfiguration();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await mockConfigService.getConfiguration();
+    expect(mockFetchImplementation).toHaveBeenCalledTimes(1);
     
     // Wait for cache to expire
     await new Promise(resolve => setTimeout(resolve, 150));
     
     // After TTL expires, should fetch again
-    await configService.getConfiguration();
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    await mockConfigService.getConfiguration();
+    expect(mockFetchImplementation).toHaveBeenCalledTimes(2);
   });
   
   test('updateConfiguration should validate and update the configuration', async () => {
@@ -118,13 +162,13 @@ describe('ConfigurationService', () => {
       }
     };
     
-    await configService.updateConfiguration(newConfig);
+    await mockConfigService.updateConfiguration(newConfig);
     
     // Verify validation was called
     expect(commonTypes.validateConfiguration).toHaveBeenCalledWith(newConfig);
     
     // Get the updated config
-    const config = await configService.getConfiguration();
+    const config = await mockConfigService.getConfiguration();
     
     expect(config).toEqual(newConfig);
     expect(config.version).toBe('1.1.0');
@@ -150,12 +194,12 @@ describe('ConfigurationService', () => {
     };
     
     // Expect the update to fail
-    await expect(configService.updateConfiguration(newConfig))
+    await expect(mockConfigService.updateConfiguration(newConfig))
       .rejects
       .toThrow('Configuration validation failed: Invalid model, Missing required fields');
       
     // The config should not be updated
-    const config = await configService.getConfiguration();
+    const config = await mockConfigService.getConfiguration();
     expect(config.version).not.toBe('1.2.0');
   });
 }); 

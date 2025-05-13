@@ -9,6 +9,8 @@ import {
   AdminInitiateAuthCommand,
   AdminDeleteUserCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import fetch from "node-fetch"; // Ensure you have node-fetch or use native fetch in Node 18+
 
 // Configuration
@@ -16,6 +18,8 @@ const AWS_REGION = "us-east-2";
 const AWS_PROFILE = "kinable-dev"; // Ensure this profile is configured in your AWS CLI
 const STACK_NAME = "kinable-dev";
 const TEST_PROMPT = "Tell me a fun fact about space.";
+const TEST_FAMILY_ID_LOGICAL = "fam-integ-test";
+const TEST_PROFILE_ID_LOGICAL = "prof-integ-test";
 
 // Generate a unique username for each test run
 const testUserEmail = `testuser-${Date.now()}@kinable.test`;
@@ -24,12 +28,19 @@ const testUserPassword = `TestPass${Date.now()}!Ab`;
 const cfClient = new CloudFormationClient({ region: AWS_REGION, profile: AWS_PROFILE });
 const cognitoClient = new CognitoIdentityProviderClient({
   region: AWS_REGION,
-  profile: AWS_PROFILE,
+  profile: AWS_PROFILE, 
 });
+const dynamoDbClient = new DynamoDBClient({ 
+  region: AWS_REGION,
+  profile: AWS_PROFILE, 
+});
+const docClient = DynamoDBDocumentClient.from(dynamoDbClient);
 
 let userPoolId;
 let userPoolClientId;
 let chatApiUrl;
+let familiesTableName;
+let profilesTableName;
 
 async function getStackOutputs() {
   console.log(`Fetching outputs for stack: ${STACK_NAME}...`);
@@ -49,17 +60,21 @@ async function getStackOutputs() {
       (o) => o.OutputKey === "CognitoUserPoolClientId"
     )?.OutputValue;
     chatApiUrl = outputs.find((o) => o.OutputKey === "ChatRouterApi")?.OutputValue;
+    familiesTableName = outputs.find((o) => o.OutputKey === "FamiliesTableName")?.OutputValue;
+    profilesTableName = outputs.find((o) => o.OutputKey === "ProfilesTableName")?.OutputValue;
 
-    if (!userPoolId || !userPoolClientId || !chatApiUrl) {
-      console.error("Missing critical outputs:", { userPoolId, userPoolClientId, chatApiUrl });
+    if (!userPoolId || !userPoolClientId || !chatApiUrl || !familiesTableName || !profilesTableName) {
+      console.error("Missing critical outputs:", { userPoolId, userPoolClientId, chatApiUrl, familiesTableName, profilesTableName });
       throw new Error(
-        "Could not find all required outputs (CognitoUserPoolId, CognitoUserPoolClientId, ChatRouterApi)."
+        "Could not find all required outputs (CognitoUserPoolId, CognitoUserPoolClientId, ChatRouterApi, FamiliesTableName, ProfilesTableName)."
       );
     }
     console.log("Stack outputs retrieved successfully.");
     console.log("  User Pool ID:", userPoolId);
     console.log("  User Pool Client ID:", userPoolClientId);
     console.log("  Chat API URL:", chatApiUrl);
+    console.log("  Families Table:", familiesTableName);
+    console.log("  Profiles Table:", profilesTableName);
   } catch (error) {
     console.error("Error fetching stack outputs:", error);
     throw error;
@@ -76,8 +91,8 @@ async function createAndConfirmUser() {
       UserAttributes: [
         { Name: "email", Value: testUserEmail },
         { Name: "email_verified", Value: "true" }, // Auto-verify for testing ease
-        { Name: "custom:familyId", Value: "fam-integ-test" },
-        { Name: "custom:profileId", Value: "prof-integ-test" },
+        { Name: "custom:familyId", Value: TEST_FAMILY_ID_LOGICAL },
+        { Name: "custom:profileId", Value: TEST_PROFILE_ID_LOGICAL },
         { Name: "custom:role", Value: "guardian" },
         { Name: "custom:region", Value: AWS_REGION },
       ],
@@ -97,6 +112,52 @@ async function createAndConfirmUser() {
   } catch (error) {
     console.error("Error creating or confirming user:", error);
     throw error;
+  }
+}
+
+async function setupDynamoDBItems() {
+  console.log("Setting up DynamoDB items...");
+  const familyIdDynamo = `FAMILY#${AWS_REGION}#${TEST_FAMILY_ID_LOGICAL}`;
+  const profileIdDynamo = `PROFILE#${AWS_REGION}#${TEST_PROFILE_ID_LOGICAL}`;
+
+  const familyItem = {
+    familyId: familyIdDynamo,
+    tokenBalance: 100,
+    pauseStatusFamily: false,
+    primaryRegion: AWS_REGION,
+  };
+
+  const profileItem = {
+    profileId: profileIdDynamo,
+    familyId: familyIdDynamo, // Link to the family item
+    role: "guardian",
+    pauseStatusProfile: false,
+    userRegion: AWS_REGION,
+  };
+
+  try {
+    await docClient.send(new PutCommand({ TableName: familiesTableName, Item: familyItem }));
+    console.log(`Family item created in ${familiesTableName}`);
+    await docClient.send(new PutCommand({ TableName: profilesTableName, Item: profileItem }));
+    console.log(`Profile item created in ${profilesTableName}`);
+  } catch (error) {
+    console.error("Error setting up DynamoDB items:", error);
+    throw error;
+  }
+}
+
+async function cleanupDynamoDBItems() {
+  console.log("Cleaning up DynamoDB items...");
+  const familyIdDynamo = `FAMILY#${AWS_REGION}#${TEST_FAMILY_ID_LOGICAL}`;
+  const profileIdDynamo = `PROFILE#${AWS_REGION}#${TEST_PROFILE_ID_LOGICAL}`;
+
+  try {
+    await docClient.send(new DeleteCommand({ TableName: profilesTableName, Key: { profileId: profileIdDynamo } }));
+    console.log(`Profile item deleted from ${profilesTableName}`);
+    await docClient.send(new DeleteCommand({ TableName: familiesTableName, Key: { familyId: familyIdDynamo } }));
+    console.log(`Family item deleted from ${familiesTableName}`);
+  } catch (error) {
+    console.warn("Warning: Failed to cleanup DynamoDB items. Manual cleanup may be required.", error);
   }
 }
 
@@ -144,8 +205,8 @@ async function callChatApi(idToken) {
       throw new Error(`Chat API call failed with status ${response.status}`);
     }
     // Add more assertions here based on expected response structure
-    if (!responseBody.text) {
-        throw new Error("Chat API response did not contain a .text field");
+    if (!responseBody.data || !responseBody.data.text) {
+        throw new Error("Chat API response did not contain a data.text field");
     }
     console.log("Chat API call successful and response format looks good!");
 
@@ -173,6 +234,7 @@ async function runIntegrationTest() {
   try {
     await getStackOutputs();
     await createAndConfirmUser();
+    await setupDynamoDBItems();
     const idToken = await signInUser();
     await callChatApi(idToken);
     console.log("\n✅ Integration test completed successfully! ✅");
@@ -183,7 +245,12 @@ async function runIntegrationTest() {
     if (userPoolId && testUserEmail) { // Ensure these are defined before attempting cleanup
         await cleanupUser();
     } else {
-        console.log("Skipping cleanup as user creation might have failed early.");
+        console.log("Skipping Cognito user cleanup as user creation might have failed early.");
+    }
+    if (familiesTableName && profilesTableName) { // Ensure tables names are available
+        await cleanupDynamoDBItems();
+    } else {
+        console.log("Skipping DynamoDB cleanup as table names not found.");
     }
   }
 }

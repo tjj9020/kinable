@@ -8,4 +8,6 @@ export enum SampleEnum {
   Option2 = 'OPTION2',
 }
 
-export * from './core-interfaces'; 
+export * from './core-interfaces';
+export * from './config-schema';
+export * from './ai-interfaces'; 

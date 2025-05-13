@@ -77,7 +77,7 @@ Resources:
     Properties:
       Description: Adding a description to test CFN update behavior. # Test nudge
       CodeUri: . 
-      Handler: dist/handlers/hello.handler
+      Handler: dist/src/handlers/hello.handler
       Role: !GetAtt HelloWorldFunctionRole.Arn
       Events:
         HelloWorldEvent:
@@ -180,7 +180,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: .
-      Handler: dist/authorizers/jwtAuthorizer.handler
+      Handler: dist/src/authorizers/jwtAuthorizer.handler
       Runtime: nodejs20.x
       Timeout: 5
       Role: !GetAtt LambdaAuthorizerFunctionRole.Arn
@@ -333,7 +333,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       CodeUri: .
-      Handler: dist/handlers/chatRouter.handler
+      Handler: dist/src/handlers/chatRouter.handler
       Runtime: nodejs20.x
       Timeout: 30  # LLM calls can take time
       MemorySize: 256  # More memory for handling requests

@@ -5,12 +5,15 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
+    "prebuild:sam": "rm -rf node_modules/@kinable/common-types && mkdir -p node_modules/@kinable && cp -R ../../packages/common-types/dist node_modules/@kinable/common-types && cp ../../packages/common-types/package.json node_modules/@kinable/common-types/",
     "build": "tsc -p tsconfig.build.json",
+    "build:sam": "npm run prebuild:sam && sam build -t sam.yaml",
+    "deploy": "./build-and-deploy.sh",
     "test": "jest",
     "test:unit": "jest --testPathIgnorePatterns=\\\\\\.integration\\\\\\.test\\\\\\.ts$",
     "test:integration": "jest --testPathPattern=\\\\\\.integration\\\\\\.test\\\\\\.ts$",
-    "lint": "eslint . --ext .ts --quiet",
-    "deploy": "echo \"Deploy script to be implemented\""
+    "test:e2e": "node src/integration-tests/fullChatFlow.integration.test.mjs",
+    "lint": "eslint . --ext .ts --quiet"
   },
   "devDependencies": {
     "@aws-sdk/client-cloudformation": "^3.808.0",
@@ -31,6 +34,7 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.0.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0",
+    "@kinable/common-types": "file:../../packages/common-types",
     "amazon-cognito-identity-js": "^6.3.7",
     "aws-jwt-verify": "^4.0.0",
     "dotenv": "^16.5.0"

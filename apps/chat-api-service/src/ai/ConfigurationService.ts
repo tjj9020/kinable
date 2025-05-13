@@ -2,7 +2,7 @@ import {
   ProviderConfiguration, 
   DEFAULT_ROUTING_WEIGHTS,
   validateConfiguration
-} from '../../../../packages/common-types/src/config-schema';
+} from '@kinable/common-types';
 
 /**
  * Service for managing provider configurations

@@ -238,43 +238,32 @@ export class ConfigurationService {
     
     // In production, this would write to DynamoDB
     // For now, just update the local cache
-    // TODO: Implement writing to DynamoDB using this.dbProvider.putItem
-    // Example structure for item to put:
-    // const itemToPut = {
-    //   [PROVIDER_CONFIG_TABLE_KEY_NAME]: this.activeConfigId, // or a versioned ID
-    //   configData: config,
-    //   lastUpdated: new Date().toISOString()
-    // };
-    // await this.dbProvider.putItem(this.providerConfigTableName, itemToPut, PROVIDER_CONFIG_TABLE_KEY_NAME, this.serviceRegion);
-
-    // console.warn('ConfigurationService.updateConfiguration is not yet fully implemented to write to DynamoDB.');
+    // TODO: Implement writing to DynamoDB using this.dbProvider.putItem - THIS TODO IS BEING ADDRESSED
+    const itemToPut = {
+      [PROVIDER_CONFIG_TABLE_KEY_NAME]: this.activeConfigId, // Use the activeConfigId for the item's key
+      configData: config,
+      lastUpdated: new Date().toISOString()
+    };
 
     try {
-      const itemToPut = {
-        [PROVIDER_CONFIG_TABLE_KEY_NAME]: this.activeConfigId, // Using the activeConfigId as the key for the config document
-        configData: config, // The actual configuration object
-        lastUpdated: new Date().toISOString(), // Timestamp for when this configuration was last updated
-        version: config.version // Storing version at the top level for easier querying/filtering if needed
-      };
-
       await this.dbProvider.putItem(
         this.providerConfigTableName,
         itemToPut,
-        PROVIDER_CONFIG_TABLE_KEY_NAME, // The name of the partition key attribute
-        this.serviceRegion // The region for the DynamoDB operation (though table is global, provider needs region)
+        PROVIDER_CONFIG_TABLE_KEY_NAME, // keyAttributeName
+        this.serviceRegion // userRegion - assuming this is appropriate for partition key context if not globally unique
       );
       
-      console.log(`Successfully updated configuration '${this.activeConfigId}' in ${this.providerConfigTableName}`);
-      
-      // Update local cache only after successful DB write
+      // Update local cache on successful DB write
       this.config = config;
-      this.lastFetched = Date.now(); // Reset cache timer
+      this.lastFetched = Date.now();
+      console.log(`Successfully updated configuration '${this.activeConfigId}' in ${this.providerConfigTableName} and refreshed cache.`);
 
     } catch (error) {
       console.error(`Error updating configuration '${this.activeConfigId}' in ${this.providerConfigTableName}:`, error);
-      // Decide on error handling: re-throw, or maybe use old config if critical?
-      // For now, re-throwing to make the caller aware.
-      throw new Error(`Failed to write configuration to DynamoDB: ${error instanceof Error ? error.message : String(error)}`);
+      // Rethrow the error so the caller is aware of the failure
+      throw new Error(`Failed to update configuration in DynamoDB: ${error instanceof Error ? error.message : String(error)}`);
     }
+
+    // console.warn('ConfigurationService.updateConfiguration is not yet fully implemented to write to DynamoDB.');
   }
 } 

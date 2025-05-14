@@ -31,22 +31,30 @@ export class DynamoDBProvider implements IDatabaseProvider {
    */
   private _constructGlobalTableKeyValue(entityPrefix: string, itemRegion: string, logicalId: string): string {
     if (!itemRegion) {
-      // This should ideally not happen if userRegion is made mandatory for relevant operations
       console.warn(`itemRegion is missing for ${entityPrefix}#${logicalId}. Falling back to client region: ${this.awsClientRegion}`);
       return `${entityPrefix}#${this.awsClientRegion}#${logicalId}`;
     }
     return `${entityPrefix}#${itemRegion}#${logicalId}`;
   }
 
+  // Helper to determine if regional key prefixing should apply
+  private _shouldApplyRegionalPrefix(tableName: string): boolean {
+    const lowerTableName = tableName.toLowerCase();
+    return lowerTableName.includes('families') || lowerTableName.includes('profiles');
+  }
+
   async getItem<T extends object>(
     tableName: string,
-    keyAttributeName: string, // e.g., 'familyId' or 'profileId'
+    keyAttributeName: string,
     logicalId: string,
-    userRegion: string        // User's home region for the item (e.g., 'us-east-2')
+    userRegion: string 
   ): Promise<T | null> {
-    const entityPrefix = tableName.toLowerCase().includes('families') ? ENTITY_PREFIX.FAMILY : ENTITY_PREFIX.PROFILE;
-    const regionalKeyValue = this._constructGlobalTableKeyValue(entityPrefix, userRegion, logicalId);
-    const key: DatabaseKey = { [keyAttributeName]: regionalKeyValue };
+    let keyValue = logicalId;
+    if (this._shouldApplyRegionalPrefix(tableName)) {
+      const entityPrefix = tableName.toLowerCase().includes('families') ? ENTITY_PREFIX.FAMILY : ENTITY_PREFIX.PROFILE;
+      keyValue = this._constructGlobalTableKeyValue(entityPrefix, userRegion, logicalId);
+    }
+    const key: DatabaseKey = { [keyAttributeName]: keyValue };
 
     const params = {
       TableName: tableName,
@@ -65,24 +73,28 @@ export class DynamoDBProvider implements IDatabaseProvider {
   async putItem<T extends object>(
     tableName: string,
     item: T,
-    keyAttributeName: string, // e.g., 'familyId' or 'profileId'
-    userRegion: string        // User's home region for the item
+    keyAttributeName: string,
+    userRegion: string
   ): Promise<T | null> {
-    const logicalId = (item as any)[keyAttributeName];
-    if (!logicalId || typeof logicalId !== 'string') {
+    const logicalIdFromItem = (item as any)[keyAttributeName];
+    if (!logicalIdFromItem || typeof logicalIdFromItem !== 'string') {
       console.error(`Logical ID not found or invalid in item for keyAttributeName: ${keyAttributeName}`);
       return null;
     }
 
-    const entityPrefix = tableName.toLowerCase().includes('families') ? ENTITY_PREFIX.FAMILY : ENTITY_PREFIX.PROFILE;
-    const regionalKeyValue = this._constructGlobalTableKeyValue(entityPrefix, userRegion, logicalId);
+    let finalKeyValue = logicalIdFromItem;
+    // If regional prefixing applies, the logicalIdFromItem is the base ID.
+    // The actual key stored (finalKeyValue) will be the prefixed version.
+    // The item itself will have its keyAttributeName updated to this finalKeyValue.
+    if (this._shouldApplyRegionalPrefix(tableName)) {
+      const entityPrefix = tableName.toLowerCase().includes('families') ? ENTITY_PREFIX.FAMILY : ENTITY_PREFIX.PROFILE;
+      finalKeyValue = this._constructGlobalTableKeyValue(entityPrefix, userRegion, logicalIdFromItem);
+    }
 
-    // Create a new object for storage to avoid mutating the input 'item' directly if it's undesirable.
-    // And ensure the key attribute has the regionalized value.
     const itemToStore = {
       ...item,
-      [keyAttributeName]: regionalKeyValue,
-    } as T; // Cast needed as we are modifying the key structure
+      [keyAttributeName]: finalKeyValue, // Ensure the item's key field has the final (possibly prefixed) value
+    } as T;
 
     const params = {
       TableName: tableName,
@@ -105,9 +117,12 @@ export class DynamoDBProvider implements IDatabaseProvider {
     updates: Partial<T>,
     userRegion: string
   ): Promise<Partial<T> | null> {
-    const entityPrefix = tableName.toLowerCase().includes('families') ? ENTITY_PREFIX.FAMILY : ENTITY_PREFIX.PROFILE;
-    const regionalKeyValue = this._constructGlobalTableKeyValue(entityPrefix, userRegion, logicalId);
-    const key: DatabaseKey = { [keyAttributeName]: regionalKeyValue };
+    let keyValue = logicalId;
+    if (this._shouldApplyRegionalPrefix(tableName)) {
+      const entityPrefix = tableName.toLowerCase().includes('families') ? ENTITY_PREFIX.FAMILY : ENTITY_PREFIX.PROFILE;
+      keyValue = this._constructGlobalTableKeyValue(entityPrefix, userRegion, logicalId);
+    }
+    const key: DatabaseKey = { [keyAttributeName]: keyValue };
 
     // Build UpdateExpression, ExpressionAttributeValues, ExpressionAttributeNames
     let updateExpression = 'set';
@@ -166,9 +181,12 @@ export class DynamoDBProvider implements IDatabaseProvider {
     logicalId: string,
     userRegion: string
   ): Promise<boolean> {
-    const entityPrefix = tableName.toLowerCase().includes('families') ? ENTITY_PREFIX.FAMILY : ENTITY_PREFIX.PROFILE;
-    const regionalKeyValue = this._constructGlobalTableKeyValue(entityPrefix, userRegion, logicalId);
-    const key: DatabaseKey = { [keyAttributeName]: regionalKeyValue };
+    let keyValue = logicalId;
+    if (this._shouldApplyRegionalPrefix(tableName)) {
+      const entityPrefix = tableName.toLowerCase().includes('families') ? ENTITY_PREFIX.FAMILY : ENTITY_PREFIX.PROFILE;
+      keyValue = this._constructGlobalTableKeyValue(entityPrefix, userRegion, logicalId);
+    }
+    const key: DatabaseKey = { [keyAttributeName]: keyValue };
 
     const params = {
       TableName: tableName,

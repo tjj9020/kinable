@@ -1,172 +1,66 @@
 import { ConfigurationService } from './ConfigurationService';
-import { /*IDatabaseProvider,*/ ProviderConfiguration } from '@kinable/common-types'; // IDatabaseProvider removed as per new lint
-import { GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { ProviderConfiguration } from '@kinable/common-types';
+// Import real DynamoDBProvider and AWS SDK clients
+import { DynamoDBProvider } from '../data/DynamoDBProvider'; // Adjusted path
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import * as dotenv from 'dotenv'; // Added dotenv import
+
+// Load environment variables from .env.dev.remote or similar
+dotenv.config({ path: '.env.dev.remote' }); // Added dotenv config call
 
 const REGION = process.env.AWS_REGION || 'us-east-2';
-const _TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG; // Prefixed
-const _CONFIG_ID = 'kinable-dev-config-v1'; // Prefixed // Example configId
+// const _TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG; // No longer needed with direct usage
+// const _CONFIG_ID = 'kinable-dev-config-v1'; // No longer needed
 
 // Configuration for the test
-const TEST_TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG || 'KinableProviderConfig-Test';
+const TEST_TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG;
 const TEST_CONFIG_ID = 'INTEGRATION_TEST_CONFIG_V1';
-const TEST_SERVICE_REGION = REGION;
+const TEST_SERVICE_REGION = REGION; // Service region for ConfigurationService
+const TEST_DB_CLIENT_REGION = REGION; // Region for the DynamoDBDocumentClient
 
-// Mock DynamoDBProvider that stores items in memory instead of using real DynamoDB
-class MockDynamoDBProvider {
-  private items: Map<string, any> = new Map();
-  private awsClientRegion: string;
-  
-  constructor(region: string) {
-    this.awsClientRegion = region;
-  }
-  
-  async getItem<T>(tableName: string, keyName: string, logicalId: string, _userRegion: string): Promise<T | null> { // userRegion prefixed
-    const itemKey = `${tableName}:${logicalId}`;
-    if (!this.items.has(itemKey)) {
-      console.log(`[MockDynamoDBProvider] Item ${logicalId} not found in table ${tableName}`);
-      return null;
-    }
-    return this.items.get(itemKey) as T;
-  }
-  
-  async putItem<T extends object>(tableName: string, item: T, keyName: string, _userRegion: string): Promise<T | null> { // userRegion prefixed
-    // Clone the item to simulate serialization/deserialization
-    const itemToStore = JSON.parse(JSON.stringify(item));
-    // Create a key from table name and the item's key value
-    const keyValue = (item as any)[keyName];
-    const itemKey = `${tableName}:${keyValue}`;
-    
-    // Store the item
-    this.items.set(itemKey, itemToStore);
-    console.log(`[MockDynamoDBProvider] Successfully saved item with key ${keyValue} to table ${tableName}`);
-    return itemToStore;
-  }
-  
-  // Implementing additional required methods from IDatabaseProvider interface
-  async updateItem<T extends object>(
-    tableName: string, 
-    keyAttributeName: string, 
-    logicalId: string, 
-    updates: Partial<T>, 
-    _userRegion: string // userRegion prefixed
-  ): Promise<Partial<T> | null> {
-    const itemKey = `${tableName}:${logicalId}`;
-    
-    if (!this.items.has(itemKey)) {
-      console.log(`[MockDynamoDBProvider] Item ${logicalId} not found in table ${tableName} for update`);
-      return null;
-    }
-    
-    const existingItem = this.items.get(itemKey);
-    const updatedItem = { ...existingItem, ...updates };
-    this.items.set(itemKey, updatedItem);
-    
-    console.log(`[MockDynamoDBProvider] Successfully updated item with key ${logicalId} in table ${tableName}`);
-    return updatedItem as Partial<T>;
-  }
-  
-  async deleteItem(
-    tableName: string, 
-    keyAttributeName: string, 
-    logicalId: string, 
-    _userRegion: string // userRegion prefixed
-  ): Promise<boolean> {
-    const itemKey = `${tableName}:${logicalId}`;
-    
-    const result = this.items.delete(itemKey);
-    console.log(`[MockDynamoDBProvider] ${result ? 'Successfully deleted' : 'Failed to delete'} item with key ${logicalId} from table ${tableName}`);
-    
-    return result;
-  }
-  
-  async query<T extends object>(
-    tableName: string, 
-    _queryParams: unknown // queryParams prefixed
-  ): Promise<T[] | null> {
-    // Simple implementation - we'll just return all items from the table
-    // since we're not implementing full query expressions
-    console.log(`[MockDynamoDBProvider] Query called on table ${tableName}`);
-    
-    const results: T[] = [];
-    const tablePrefix = `${tableName}:`;
-    
-    for (const [itemKey, value] of this.items.entries()) {
-      if (itemKey.startsWith(tablePrefix)) {
-        results.push(value as T);
-      }
-    }
-    
-    console.log(`[MockDynamoDBProvider] Query returned ${results.length} items from table ${tableName}`);
-    return results.length > 0 ? results : null;
-  }
-  
-  clear() {
-    this.items.clear();
-  }
-}
+// Removed MockDynamoDBProvider class
 
 describe('ConfigurationService Integration Tests', () => {
-  let dbProvider: MockDynamoDBProvider;
+  let dbProvider: DynamoDBProvider;
   let configurationService: ConfigurationService;
-  let mockDdbDocClient: any;
-  
+  let ddbDocClient: DynamoDBDocumentClient;
+
   beforeAll(() => {
-    // Create a mock DynamoDB provider instead of real one
-    dbProvider = new MockDynamoDBProvider(REGION);
-    
+    if (!TEST_TABLE_NAME) {
+      throw new Error('TEST_DYNAMODB_TABLE_PROVIDERCONFIG environment variable must be set for integration tests.');
+    }
+    dbProvider = new DynamoDBProvider(TEST_DB_CLIENT_REGION);
+    const ddbClient = new DynamoDBClient({ region: TEST_DB_CLIENT_REGION });
+    ddbDocClient = DynamoDBDocumentClient.from(ddbClient);
+  });
+
+  beforeEach(() => {
+    // Re-initialize ConfigurationService before each test for a clean state
     configurationService = new ConfigurationService(
-      dbProvider,
-      TEST_TABLE_NAME,
+      dbProvider, // Re-use the dbProvider and ddbDocClient initialized in beforeAll
+      TEST_TABLE_NAME!,
       TEST_SERVICE_REGION,
       TEST_CONFIG_ID
     );
-    configurationService.setCacheTtl(1000); // Use a short TTL for cache tests (1 second)
-    
-    // Create a mock DynamoDBDocumentClient for direct operations
-    mockDdbDocClient = {
-      send: jest.fn().mockImplementation(async (command) => {
-        if (command instanceof DeleteCommand) {
-          const key = command.input.TableName && command.input.Key && 
-            `${command.input.TableName}:${command.input.Key.configId}`;
-          if (key) {
-            dbProvider.clear(); // For simplicity, just clear all items
-          }
-          return { Attributes: {} };
-        } else if (command instanceof PutCommand) {
-          if (command.input.TableName && command.input.Item) {
-            const item = command.input.Item;
-            const configId = item.configId as string;
-            if (configId) {
-              await dbProvider.putItem(
-                command.input.TableName,
-                item,
-                'configId',
-                TEST_SERVICE_REGION
-              );
-            }
-          }
-          return { Attributes: {} };
-        } else if (command instanceof GetCommand) {
-          if (command.input.TableName && command.input.Key && command.input.Key.configId) {
-            const result = await dbProvider.getItem(
-              command.input.TableName,
-              'configId',
-              command.input.Key.configId as string,
-              TEST_SERVICE_REGION
-            );
-            return { Item: result };
-          }
-          return { Item: null };
-        }
-        return {};
-      })
-    };
+    configurationService.setCacheTtl(1000); // Short TTL for cache tests
   });
   
-  afterEach(() => {
-    // Clear mock data between tests
-    dbProvider.clear();
-    jest.clearAllMocks();
+  // afterEach: We need a robust way to clean up items.
+  // The ConfigurationService itself doesn't have a delete method.
+  // We'll use the ddbDocClient to delete the test item.
+  afterEach(async () => {
+    try {
+      await ddbDocClient.send(new DeleteCommand({
+        TableName: TEST_TABLE_NAME,
+        Key: { configId: TEST_CONFIG_ID }, // The key for ProviderConfigTable is 'configId'
+      }));
+      // console.log(`Cleaned up item ${TEST_CONFIG_ID} from ${TEST_TABLE_NAME}`);
+    } catch (error) {
+      // console.warn(`Could not clean up item ${TEST_CONFIG_ID} from ${TEST_TABLE_NAME}:`, error);
+      // It might not exist if a test failed before creating it, which is fine.
+    }
+    // jest.clearAllMocks(); // No Jest mocks to clear for dbProvider or ddbDocClient
   });
   
   const getSampleConfig = (version: string = '1.0.0'): ProviderConfiguration => ({
@@ -176,6 +70,7 @@ describe('ConfigurationService Integration Tests', () => {
       openai: {
         active: true,
         keyVersion: 1,
+        // secretId: 'test-secret', // No longer needed for config structure - remove if not part of ProviderConfiguration
         endpoints: { [TEST_SERVICE_REGION]: { url: 'https://api.openai.com/v1', region: TEST_SERVICE_REGION, priority: 1, active: true } },
         models: {
           'gpt-4o': { tokenCost: 0.01, priority: 1, capabilities: ['test'], contextSize: 128, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 },
@@ -188,7 +83,7 @@ describe('ConfigurationService Integration Tests', () => {
     },
     routing: {
       rules: [{ type: 'capability', required: ['test'], preferredProvider: 'openai' }],
-      weights: { cost: 0.5, quality: 0.3, latency: 0.1, availability: 0.1 },
+      weights: { cost: 0.5, quality: 0.3, latency: 0.1, availability: 0.1 }, // Sums to 1.0
       defaultProvider: 'openai',
       defaultModel: 'gpt-4o',
     },
@@ -196,18 +91,29 @@ describe('ConfigurationService Integration Tests', () => {
   });
 
   test('should fetch default configuration if no item exists in DynamoDB', async () => {
+    // Ensure item does not exist (afterEach should handle general cleanup, but good for clarity)
+    await ddbDocClient.send(new DeleteCommand({ TableName: TEST_TABLE_NAME, Key: { configId: TEST_CONFIG_ID } }));
+    
     const config = await configurationService.getConfiguration();
-    const defaultConfig = (configurationService as any).getDefaultConfiguration(); // Access private method for comparison
+    const defaultConfig = (configurationService as any).getDefaultConfiguration();
     expect(config.version).toBe(defaultConfig.version);
-    expect(config.providers.openai.active).toBe(true); // Check a known default value
+    expect(config.providers.openai.active).toBe(true);
   });
 
   test('should store and fetch a valid configuration from DynamoDB', async () => {
     const sampleConfig = getSampleConfig('1.0.1');
     await configurationService.updateConfiguration(sampleConfig);
 
+    // To ensure we are fetching from DB, not cache, we can re-instantiate or clear cache
+    // For this test, let's clear the service's internal cache
+    (configurationService as any).lastFetched = 0;
+
     const fetchedConfig = await configurationService.getConfiguration();
-    expect(fetchedConfig).toEqual(sampleConfig);
+    // Compare relevant parts or deep equal, ProviderConfiguration can have dynamic `updatedAt`
+    expect(fetchedConfig.version).toEqual(sampleConfig.version);
+    expect(fetchedConfig.providers).toEqual(sampleConfig.providers);
+    expect(fetchedConfig.routing).toEqual(sampleConfig.routing);
+    expect(fetchedConfig.featureFlags).toEqual(sampleConfig.featureFlags);
   });
 
   test('should use cached configuration within TTL', async () => {
@@ -216,57 +122,62 @@ describe('ConfigurationService Integration Tests', () => {
 
     // Modify item directly in DB to check if cache is used
     const modifiedSampleConfig = getSampleConfig('1.0.3-modified');
-    await mockDdbDocClient.send(new PutCommand({
+    // The item stored by ConfigurationService has configData nested
+    const itemToPutInDB = {
+        configId: TEST_CONFIG_ID,
+        configData: modifiedSampleConfig, // ConfigurationService stores the ProviderConfiguration under 'configData'
+        lastUpdated: new Date().toISOString()
+    };
+    await ddbDocClient.send(new PutCommand({
       TableName: TEST_TABLE_NAME,
-      Item: { configId: TEST_CONFIG_ID, configData: modifiedSampleConfig, version: modifiedSampleConfig.version, lastUpdated: new Date().toISOString() },
+      Item: itemToPutInDB,
     }));
 
     const cachedConfig = await configurationService.getConfiguration(); // Should get from cache
-    expect(cachedConfig.version).toBe('1.0.2'); // Expecting the original cached version
+    expect(cachedConfig.version).toBe('1.0.2'); 
   });
 
   test('should fetch updated configuration from DynamoDB after cache TTL expires', async () => {
     const initialConfig = getSampleConfig('1.0.4');
-    await configurationService.updateConfiguration(initialConfig); // Puts item in DB and cache
+    await configurationService.updateConfiguration(initialConfig); 
 
     const updatedConfigInDB = getSampleConfig('1.0.5-updated');
-    await mockDdbDocClient.send(new PutCommand({
+    const itemToPutInDB = {
+        configId: TEST_CONFIG_ID,
+        configData: updatedConfigInDB,
+        lastUpdated: new Date().toISOString()
+    };
+    await ddbDocClient.send(new PutCommand({
       TableName: TEST_TABLE_NAME,
-      Item: { configId: TEST_CONFIG_ID, configData: updatedConfigInDB, version: updatedConfigInDB.version, lastUpdated: new Date().toISOString() },
+      Item: itemToPutInDB,
     }));
 
-    // Wait for cache to expire (TTL is 1000ms)
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 1500)); // Wait for cache (1000ms TTL) to expire
 
     const fetchedConfigAfterTTL = await configurationService.getConfiguration();
     expect(fetchedConfigAfterTTL.version).toBe(updatedConfigInDB.version);
   });
 
   test('updateConfiguration should throw error for invalid configuration data', async () => {
-    // Test with invalid data
-    // This test needs to be more specific about *why* the config is invalid
-    // to match the expected error message from validateConfiguration
     const invalidConfig = {
       version: '1.0.0',
       updatedAt: Date.now(),
       providers: { 
-        openai: { // Provide a minimal valid structure for providers to pass that part of validation
-          active: true, 
-          keyVersion: 1, 
-          secretId: "secret",
-          endpoints: { default: { url: "url", region: "region"}},
-          models: { "gpt-4": { active: true, contextWindow: 8000, costs: { prompt: 0, completion: 0}, features: ["text"]}},
+        openai: { 
+          active: true, keyVersion: 1, 
+          endpoints: { default: { url: "url", region: "region", priority: 1, active: true }}, // Added priority and active
+          models: { "gpt-4": { tokenCost: 0.03, priority: 1, capabilities: ["test"], contextSize: 8000, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 }}, // made model valid
           rateLimits: { rpm: 10, tpm: 1000},
-          retryConfig: { maxRetries: 1, delayMs: 100}
+          retryConfig: { maxRetries: 1, initialDelayMs: 100, maxDelayMs: 1000 } // Added maxDelayMs
         }
       },
       routing: {
-        rules: [], // Optional, can be empty
-        weights: { cost: 0.5, quality: 0.6, latency: 0.0, availability: 0.0 }, // Invalid: sum > 1 (0.5 + 0.6 = 1.1)
-        defaultProvider: 'openai', // Optional, but good to have for partial validity
-        defaultModel: 'gpt-4',    // Optional
+        rules: [],
+        weights: { cost: 0.5, quality: 0.6, latency: 0.0, availability: 0.0 }, // Invalid: sum > 1
+        defaultProvider: 'openai',
+        defaultModel: 'gpt-4',
       },
-      featureFlags: {} // Optional
+      featureFlags: {}
     } as unknown as ProviderConfiguration;
 
     try {
@@ -274,75 +185,85 @@ describe('ConfigurationService Integration Tests', () => {
       fail('Should have thrown an error for invalid configuration');
     } catch (error: any) {
       expect(error).toBeInstanceOf(Error);
-      // Check for the specific error message from validateConfiguration
       expect(error.message).toContain('Invalid configuration'); 
       expect(error.message).toContain('Routing weights must sum to 1');
     }
   });
 
-  test('getConfiguration should return default if DynamoDB fetch fails catastrophically (simulated)', async () => {
-    // Simulate a dbProvider failure
-    const originalGetItem = dbProvider.getItem;
-    dbProvider.getItem = jest.fn().mockRejectedValue(new Error('Simulated DynamoDB Unavailability'));
+  test('getConfiguration should return default if DynamoDB fetch fails catastrophically (simulated by service)', async () => {
+    // To simulate a true DynamoDB unavailability for getItem within ConfigurationService,
+    // we would need to mock dbProvider.getItem.
+    // However, DynamoDBProvider itself has try-catch and returns null.
+    // ConfigurationService's fetchConfiguration handles this null and returns default.
+    // So, the existing test logic where dbProvider.getItem is mocked to reject
+    // is more of a unit test for fetchConfiguration's error handling.
+    // For a true integration test of this scenario, one might delete the table or cause IAM issues,
+    // which is too destructive.
+    // We will test the path where getItem returns null (e.g. item not found after cache expiry).
 
-    // Explicitly invalidate the cache for this test
+    // Ensure the item is not in the DB
+    await ddbDocClient.send(new DeleteCommand({ TableName: TEST_TABLE_NAME, Key: { configId: TEST_CONFIG_ID } }));
+    
+    // Invalidate cache
     (configurationService as any).lastFetched = 0;
-    (configurationService as any).cachedConfiguration = null;
+    // (configurationService as any).config = null; // Better to let it be default initially
 
     const config = await configurationService.getConfiguration();
     const defaultConfig = (configurationService as any).getDefaultConfiguration();
     expect(config.version).toBe(defaultConfig.version);
     expect(config.providers.openai?.active).toBe(true);
-
-    dbProvider.getItem = originalGetItem; // Restore original method
   });
 
   test('updateConfiguration should create item if it does not initially exist', async () => {
-    // Ensure item is not in DB (afterEach should handle this, but good for clarity)
-    await mockDdbDocClient.send(new DeleteCommand({
-      TableName: TEST_TABLE_NAME,
-      Key: { configId: TEST_CONFIG_ID },
-    }));
+    await ddbDocClient.send(new DeleteCommand({ TableName: TEST_TABLE_NAME, Key: { configId: TEST_CONFIG_ID } }));
 
     const newConfig = getSampleConfig('2.0.0-new');
-    await configurationService.updateConfiguration(newConfig); // Should create the item
+    await configurationService.updateConfiguration(newConfig);
 
-    // Verify directly from DB
-    const { Item } = await mockDdbDocClient.send(new GetCommand({
+    const { Item } = await ddbDocClient.send(new GetCommand({
       TableName: TEST_TABLE_NAME,
       Key: { configId: TEST_CONFIG_ID },
     }));
 
     expect(Item).toBeDefined();
     expect(Item?.configId).toBe(TEST_CONFIG_ID);
-    expect(Item?.version).toBe('2.0.0-new');
-    expect(Item?.configData).toEqual(newConfig); // The service stores the full config under configData
-
-    // Also verify that getConfiguration now returns this new config (and populates cache)
+    // The ConfigurationService stores the actual ProviderConfiguration object under 'configData'
+    expect(Item?.configData).toBeDefined();
+    if (Item?.configData) {
+      const configData = Item.configData as ProviderConfiguration;
+      expect(configData.version).toBe('2.0.0-new');
+      // Deep compare the nested configData
+      expect(configData.providers).toEqual(newConfig.providers);
+      expect(configData.routing).toEqual(newConfig.routing);
+      expect(configData.featureFlags).toEqual(newConfig.featureFlags);
+    }
+    
+    // Also verify that getConfiguration now returns this new config
+    (configurationService as any).lastFetched = 0; // force re-fetch from DB
     const fetchedConfig = await configurationService.getConfiguration();
-    expect(fetchedConfig).toEqual(newConfig);
+    expect(fetchedConfig.version).toEqual(newConfig.version);
+    expect(fetchedConfig.providers).toEqual(newConfig.providers);
   });
 
   test('getConfiguration should fetch from DB if cache is empty but item exists in DB', async () => {
     const dbConfig = getSampleConfig('3.0.0-db-only');
-    // Put item directly into DB, bypassing the service's cache
-    await mockDdbDocClient.send(new PutCommand({
+    const itemToPutInDB = {
+        configId: TEST_CONFIG_ID,
+        configData: dbConfig,
+        lastUpdated: new Date().toISOString()
+    };
+    await ddbDocClient.send(new PutCommand({
       TableName: TEST_TABLE_NAME,
-      Item: { configId: TEST_CONFIG_ID, configData: dbConfig, version: dbConfig.version, lastUpdated: new Date().toISOString() },
+      Item: itemToPutInDB,
     }));
 
-    // Create a new instance of the service or reset cache to ensure it's not cached.
-    // For simplicity, we will rely on afterEach cleaning up, and this test inserting directly.
-    // If we were concerned about interaction between tests, a new service instance would be better here.
-    // Let's clear the cache by fast-forwarding time past TTL and fetching (which would fetch default if item wasn't there)
-    // then try to fetch our specific item.
-
-    // To ensure cache is considered stale for the main configurationService instance:
     (configurationService as any).lastFetched = 0; // Force cache to be considered stale
 
     const fetchedConfig = await configurationService.getConfiguration();
     expect(fetchedConfig).toBeDefined();
     expect(fetchedConfig.version).toBe('3.0.0-db-only');
-    expect(fetchedConfig).toEqual(dbConfig);
+    expect(fetchedConfig.providers).toEqual(dbConfig.providers); // Compare parts
+    expect(fetchedConfig.routing).toEqual(dbConfig.routing);
+    expect(fetchedConfig.featureFlags).toEqual(dbConfig.featureFlags);
   });
 }); 

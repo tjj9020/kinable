@@ -15,10 +15,8 @@ import { DynamoDBDocumentClient, PutCommand, DeleteCommand, GetCommand } from "@
 import fetch from "node-fetch"; // Or use native fetch in Node 18+
 import { v4 as uuidv4 } from 'uuid';
 import { ProviderConfiguration } from "@kinable/common-types"; // Adjust path as needed
-import * as dotenv from 'dotenv'; // Added dotenv import
 
 // Load environment variables from .env.dev.remote, similar to other integration tests
-dotenv.config({ path: '../../../.env.dev.remote' }); // Adjusted path to project root
 
 // --- Test Configuration ---
 const AWS_REGION = process.env.TEST_AWS_REGION || "us-east-2"; // Ensure this is consistent
@@ -233,10 +231,22 @@ async function cleanupTestData() {
 describe("Chat Router E2E Test", () => {
   beforeAll(async () => {
     console.log("[E2E Test] Starting beforeAll setup...");
+
+    // Log environment variables for diagnostics
+    console.log(`[E2E Test ENV DEBUG] process.env.TEST_AWS_REGION: ${process.env.TEST_AWS_REGION}`);
+    console.log(`[E2E Test ENV DEBUG] process.env.TEST_STACK_NAME: ${process.env.TEST_STACK_NAME}`);
+    console.log(`[E2E Test ENV DEBUG] Resolved AWS_REGION: ${AWS_REGION}`);
+    console.log(`[E2E Test ENV DEBUG] Resolved STACK_NAME: ${STACK_NAME}`);
+    console.log(`[E2E Test ENV DEBUG] process.env.AWS_PROFILE (raw from env file): ${process.env.AWS_PROFILE}`);
+
     // Initialize AWS SDK clients
-    // Note: For local testing against AWS, ensure your AWS_PROFILE or credentials are set in the environment
-    // For CI, IAM roles for the test execution environment should be used.
-    const clientConfig = { region: AWS_REGION }; // Add profile: AWS_PROFILE if needed and configured
+    const clientConfig: any = { region: AWS_REGION };
+    if (process.env.AWS_PROFILE) {
+      console.log(`[E2E Test ENV DEBUG] Using AWS_PROFILE: ${process.env.AWS_PROFILE} for SDK clients`);
+      // The AWS SDK v3 should pick up AWS_PROFILE from the environment automatically.
+      // Explicitly setting it via a credentials provider is more complex and usually not needed if the env var is set.
+      // We are relying on dotenv to set process.env.AWS_PROFILE and the SDK to pick it up.
+    }
     
     cfClient = new CloudFormationClient(clientConfig);
     cognitoClient = new CognitoIdentityProviderClient(clientConfig);

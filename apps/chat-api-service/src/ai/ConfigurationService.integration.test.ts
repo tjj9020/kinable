@@ -4,10 +4,6 @@ import { ProviderConfiguration } from '@kinable/common-types';
 import { DynamoDBProvider } from '../data/DynamoDBProvider'; // Adjusted path
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import * as dotenv from 'dotenv'; // Added dotenv import
-
-// Load environment variables from .env.dev.remote or similar
-dotenv.config({ path: '.env.dev.remote' }); // Added dotenv config call
 
 const REGION = process.env.AWS_REGION || 'us-east-2';
 // const _TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG; // No longer needed with direct usage

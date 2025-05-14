@@ -50,10 +50,10 @@ describe('ChatRouter Handler', () => {
 
   beforeEach(async () => {
     // Set environment variables *before* resetting and importing modules
-    process.env.AWS_REGION = 'us-east-2';
-    process.env.PROVIDER_CONFIG_TABLE_NAME = 'test-provider-config-table';
-    process.env.ACTIVE_CONFIG_ID = 'test-active-config-id';
-    process.env.OPENAI_API_SECRET_ID = 'test-openai-secret-id';
+    process.env.AWS_REGION = 'us-east-2'; // Used as SERVICE_REGION_ENV
+    process.env.PROVIDER_CONFIG_TABLE_NAME = 'test-provider-config-table'; // Changed from PROVIDER_CONFIG_TABLE
+    process.env.ACTIVE_CONFIG_ID = 'test-active-config-id'; // This one was correct
+    process.env.OPENAI_API_KEY_SECRET_ID = 'test-openai-secret-id'; // Changed from OPENAI_API_KEY_SECRET
 
     // Reset modules to ensure chatRouter is loaded with the above env vars
     // and that it picks up a fresh version of the AIModelRouter mock.

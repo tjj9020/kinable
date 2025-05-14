@@ -29,6 +29,7 @@ export interface ProviderConfig {
   keyVersion: number;      // Current key version
   endpoints: Record<string, EndpointConfig>; // Region-specific endpoints
   models: Record<string, ModelConfig>;      // Available models from this provider
+  defaultModel?: string;    // Optional: Default model for this specific provider
   rateLimits: {
     rpm: number;           // Requests per minute
     tpm: number;           // Tokens per minute

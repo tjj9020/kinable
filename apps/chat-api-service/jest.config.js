@@ -17,5 +17,6 @@ module.exports = {
     '^node-fetch$': require.resolve('node-fetch'),
     '^amazon-cognito-identity-js$': require.resolve('amazon-cognito-identity-js'),
   },
-  // setupFilesAfterEnv: ['<rootDir>/src/setupTests.ts'], // if you have a setup file
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
+  preset: 'ts-jest',
 }; 

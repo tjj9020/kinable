@@ -6,9 +6,9 @@ import { DynamoDBProvider } from '../data/DynamoDBProvider';
 import { ConfigurationService } from '../ai/ConfigurationService';
 
 // Environment variables - use names exactly as defined in sam.yaml
-const PROVIDER_CONFIG_TABLE_ENV = process.env.PROVIDER_CONFIG_TABLE;
+const PROVIDER_CONFIG_TABLE_ENV = process.env.PROVIDER_CONFIG_TABLE_NAME;
 const ACTIVE_CONFIG_ID_ENV = process.env.ACTIVE_CONFIG_ID;
-const OPENAI_API_KEY_SECRET_ENV = process.env.OPENAI_API_KEY_SECRET;
+const OPENAI_API_KEY_SECRET_ENV = process.env.OPENAI_API_KEY_SECRET_ID;
 const SERVICE_REGION_ENV = process.env.AWS_REGION || 'us-east-2'; // Default if not set by Lambda environment
 
 // Initialize clients and services once per Lambda cold start if possible
@@ -50,7 +50,7 @@ export const handler = async (
     // --- Dependency Initialization --- 
     // Check for required environment variables for AI services
     if (!PROVIDER_CONFIG_TABLE_ENV || !ACTIVE_CONFIG_ID_ENV || !OPENAI_API_KEY_SECRET_ENV) {
-      console.error('Missing required environment variables for AI services configuration. Check PROVIDER_CONFIG_TABLE, ACTIVE_CONFIG_ID, OPENAI_API_KEY_SECRET.');
+      console.error('Missing required environment variables for AI services configuration. Check PROVIDER_CONFIG_TABLE_NAME, ACTIVE_CONFIG_ID, OPENAI_API_KEY_SECRET_ID.');
       return createErrorResponse(500, 'Internal server configuration error', 'CONFIG_ERROR');
     }
 

@@ -34,6 +34,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.50.4",
     "@aws-sdk/client-dynamodb": "^3.0.0",
     "@aws-sdk/client-secrets-manager": "^3.808.0",
     "@aws-sdk/lib-dynamodb": "^3.0.0",

@@ -16,7 +16,6 @@ import {
 } from '@aws-sdk/client-cognito-identity-provider';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import * as dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid'; // For generating unique usernames
 // Assuming FamilyData and ProfileData types are available from a shared package
 // e.g., import { FamilyData, ProfileData } from '@kinable/common-types'; 
@@ -25,16 +24,16 @@ type FamilyData = any;
 type ProfileData = any;
 
 // Load environment variables
-dotenv.config({ path: '.env.dev.remote' }); // Assuming Jest runs from package root
+// dotenv.config({ path: '../../../.env.dev.remote' }); // REMOVE THIS LINE
 
 // --- Configuration ---
 // These values need to be configured, preferably via environment variables.
 const REGION = process.env.AWS_REGION || 'us-east-2';
-const USER_POOL_ID = process.env.TEST_COGNITO_USER_POOL_ID_INTEGRATION_TEST;
-const CLIENT_ID = process.env.TEST_COGNITO_CLIENT_ID_INTEGRATION_TEST;
+const USER_POOL_ID = process.env.TEST_COGNITO_USER_POOL_ID;
+const CLIENT_ID = process.env.TEST_COGNITO_CLIENT_ID;
 const _TEST_USER_USERNAME = process.env.TEST_AUTH_INTEGRATION_TEST_USERNAME; // Prefixed
 const _TEST_USER_PASSWORD = process.env.TEST_AUTH_INTEGRATION_TEST_PASSWORD; // Prefixed
-const API_ENDPOINT = process.env.TEST_API_ENDPOINT_INTEGRATION_TEST; // e.g., https://xxxx.execute-api.us-east-1.amazonaws.com/Prod
+const API_ENDPOINT = process.env.TEST_API_ENDPOINT; // Changed from TEST_API_ENDPOINT_INTEGRATION_TEST
 const AWS_PROFILE = process.env.AWS_PROFILE;
 
 // Table names should match your deployed CloudFormation stack outputs

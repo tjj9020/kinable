@@ -458,6 +458,33 @@ This section clarifies that the goal is not just functional implementations with
         *   Operational tools simplify multi-region maintenance tasks
     *   **Commit Point**: After monitoring and observability implementation.
 
+*   **Step 2.6: Advanced Capability-Based Routing Enhancements [FUTURE]**
+    *   **Goal**: Refine the AI model routing logic to leverage granular model capabilities, benchmark data, and detailed task requirements for more intelligent and optimized model selection.
+    *   **Sub-Step 2.6.1: Define Granular Capabilities & Task Requirements Framework**
+        *   **Goal**: Establish a comprehensive framework for defining and utilizing fine-grained model capabilities and task-specific requirements.
+        *   **Tasks**:
+            *   Research and define an extensive vocabulary for model `capabilities` (e.g., `reasoning:legal`, `coding:python_debugging`, `writing:marketing_copy`, `benchmark_mmlu_score:85+`).
+            *   Incorporate data from public benchmarks (MMLU, HumanEval, etc.) and provider documentation into capability definitions.
+            *   Design a system for users or internal services to specify detailed `requiredCapabilities` in `AIModelRequest` based on the nature of the task.
+            *   Define how the `AIModelRouter` will score and rank models based on a weighted match between a model's full capability profile and the ideal profile for a given task, beyond simple superset matching of `requiredCapabilities`.
+            *   Outline a process for regularly updating model capabilities in `ProviderConfiguration` as new models are released or benchmarks evolve.
+        *   **Definition of Done**: A detailed specification document outlining the capability vocabulary, task requirement framework, advanced routing algorithm, and update process.
+    *   **Sub-Step 2.6.2: Implement Enhanced Router Logic & Configuration**
+        *   **Goal**: Implement the advanced routing algorithms and update configuration systems.
+        *   **Tasks**:
+            *   Update the `ProviderConfiguration` schema in DynamoDB to store the expanded model capabilities.
+            *   Modify `AIModelRouter` to implement the advanced scoring and selection logic defined in 2.6.1.
+            *   Develop tools or processes for populating and maintaining the detailed capability data in `ProviderConfiguration`.
+            *   Create comprehensive unit and integration tests for the new routing logic, covering various capability matching scenarios.
+        *   **Definition of Done**: `AIModelRouter` successfully uses granular capabilities for model selection. Configuration system supports detailed capability data. Tests pass.
+    *   **Sub-Step 2.6.3: E2E Testing & Performance Evaluation**
+        *   **Goal**: Validate the effectiveness and performance of the advanced routing system.
+        *   **Tasks**:
+            *   Develop E2E test scenarios that require specific, nuanced capabilities to verify correct model selection.
+            *   Evaluate the impact of advanced routing on overall response quality and cost-effectiveness for different task types.
+            *   Monitor and tune routing algorithm weights and capability definitions based on real-world performance.
+        *   **Definition of Done**: E2E tests confirm improved model selection for capability-specific tasks. Performance metrics show benefits or justify trade-offs.
+
 ## Phase 2 Implementation Decisions
 
 The following decisions establish the technical architecture, design patterns, and acceptance criteria for the Phase 2 AI Provider system. These specifications serve as our engineering contract for implementation.

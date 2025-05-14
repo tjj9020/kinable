@@ -1,6 +1,6 @@
-import { ConfigurationService } from '../ai/ConfigurationService';
-import { DynamoDBProvider } from '../data/DynamoDBProvider';
-import { handler as chatRouterHandler } from './chatRouter'; // Corrected import
+// import { ConfigurationService } from '../ai/ConfigurationService'; // Removed
+// import { DynamoDBProvider } from '../data/DynamoDBProvider'; // Removed
+import { handler as _chatRouterHandler } from './chatRouter'; // Prefixed as it IS used.
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { AIModelResult } from '../../../../packages/common-types/src/ai-interfaces';
 

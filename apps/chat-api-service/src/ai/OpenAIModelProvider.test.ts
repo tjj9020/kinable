@@ -129,9 +129,9 @@ describe('OpenAIModelProvider', () => {
       jest.spyOn(provider, 'getProviderLimits').mockReturnValue(testLimits);
 
       // Manually adjust the token bucket to reflect the new low limits for the test
-      // @ts-expect-error 
+      // @ts-expect-error - Accessing private member for test setup
       provider.tokenBucket.tokens = testLimits.tpm; 
-      // @ts-expect-error
+      // @ts-expect-error - Accessing private member for test setup
       provider.tokenBucket.lastRefill = Date.now();
 
       const request: AIModelRequest = {

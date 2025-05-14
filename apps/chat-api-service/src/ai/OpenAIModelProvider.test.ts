@@ -1,7 +1,7 @@
 import { OpenAIModelProvider } from './OpenAIModelProvider';
-import { AIModelRequest, AIModelError, AIModelResult } from '../../../../packages/common-types/src/ai-interfaces';
+import { AIModelRequest } from '../../../../packages/common-types/src/ai-interfaces';
 import { RequestContext } from '../../../../packages/common-types/src/core-interfaces';
-import { SecretsManagerClient, GetSecretValueCommand, GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
+import { GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
 import { OpenAI } from 'openai';
 // Removed all jest.mock('openai', ...) and related MockOpenAI, MockAPIError definitions
 
@@ -59,7 +59,6 @@ describe('OpenAIModelProvider', () => {
   describe('with injected OpenAI client', () => {
     beforeEach(() => {
       // Instantiate provider with the mock client
-      // @ts-ignore - openAIClientInstance is a valid new param for OpenAIModelProvider
       provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockOpenAIClient as any); 
     });
 
@@ -130,9 +129,9 @@ describe('OpenAIModelProvider', () => {
       jest.spyOn(provider, 'getProviderLimits').mockReturnValue(testLimits);
 
       // Manually adjust the token bucket to reflect the new low limits for the test
-      // @ts-ignore 
+      // @ts-expect-error 
       provider.tokenBucket.tokens = testLimits.tpm; 
-      // @ts-ignore
+      // @ts-expect-error
       provider.tokenBucket.lastRefill = Date.now();
 
       const request: AIModelRequest = {
@@ -195,7 +194,7 @@ describe('OpenAIModelProvider', () => {
       // This is a bit of a hack but adheres to "no jest.mock('openai')"
       
       const internalCreateMock = jest.fn().mockResolvedValue(mockApiResponse);
-      let tempClientHolder: any;
+      let _tempClientHolder: any;
 
       globalMockSecretsManagerSend.mockImplementation(async () => {
         // Simulate the provider fetching keys

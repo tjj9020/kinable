@@ -41,9 +41,9 @@ const AWS_PROFILE = process.env.AWS_PROFILE;
 const DYNAMODB_TABLE_FAMILIES = process.env.TEST_DYNAMODB_TABLE_FAMILIES || 'FamiliesTable'; 
 const DYNAMODB_TABLE_PROFILES = process.env.TEST_DYNAMODB_TABLE_PROFILES || 'ProfilesTable';
 
-// Test user credentials (this user must exist in your Cognito User Pool)
-const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME || '';
-const TEST_USER_PASSWORD = process.env.TEST_USER_PASSWORD || '';
+// Test user credentials (these user must exist in your Cognito User Pool)
+// const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME || ''; // Removed duplicate
+// const TEST_USER_PASSWORD = process.env.TEST_USER_PASSWORD || ''; // Removed duplicate
 // --- End Configuration ---
 
 let idToken: string | null = null;

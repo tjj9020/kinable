@@ -64,7 +64,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       this.clientProvided = true;
       this.keysLoaded = true; // Assume keys are effectively loaded if client is provided
     } else {
-      // @ts-ignore - openaiClient will be initialized by _ensureApiKeysLoaded
+      // @ts-expect-error - openaiClient will be initialized by _ensureApiKeysLoaded
       this.openaiClient = undefined; // Needs to be initialized later
       this.clientProvided = false;
     }
@@ -119,7 +119,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
         this.keysLoaded = true;
       } catch (error) {
         this.keysLoaded = false; // Ensure keysLoaded is false if fetching fails
-        // @ts-ignore
+        // @ts-expect-error
         this.openaiClient = undefined; // Ensure client is not set if keys are not loaded
         console.error('Error ensuring API keys are loaded:', error);
         throw error; // Re-throw to be caught by generateResponse

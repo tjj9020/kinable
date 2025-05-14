@@ -93,11 +93,6 @@ class MockProvider implements IAIModelProvider {
   }
 }
 
-// Type for providers
-interface ProviderMap {
-  [key: string]: IAIModelProvider;
-}
-
 // Mock ConfigurationService
 jest.mock('../ai/ConfigurationService', () => {
   const mockGetConfiguration = jest.fn().mockResolvedValue({

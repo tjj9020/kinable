@@ -1,10 +1,10 @@
 import { ConfigurationService } from './ConfigurationService';
-import { IDatabaseProvider, ProviderConfiguration } from '@kinable/common-types';
+import { /*IDatabaseProvider,*/ ProviderConfiguration } from '@kinable/common-types'; // IDatabaseProvider removed as per new lint
 import { GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 
 const REGION = process.env.AWS_REGION || 'us-east-2';
-const TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG;
-const CONFIG_ID = 'kinable-dev-config-v1'; // Example configId
+const _TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG; // Prefixed
+const _CONFIG_ID = 'kinable-dev-config-v1'; // Prefixed // Example configId
 
 // Configuration for the test
 const TEST_TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG || 'KinableProviderConfig-Test';
@@ -20,7 +20,7 @@ class MockDynamoDBProvider {
     this.awsClientRegion = region;
   }
   
-  async getItem<T>(tableName: string, keyName: string, logicalId: string, userRegion: string): Promise<T | null> {
+  async getItem<T>(tableName: string, keyName: string, logicalId: string, _userRegion: string): Promise<T | null> { // userRegion prefixed
     const itemKey = `${tableName}:${logicalId}`;
     if (!this.items.has(itemKey)) {
       console.log(`[MockDynamoDBProvider] Item ${logicalId} not found in table ${tableName}`);
@@ -29,7 +29,7 @@ class MockDynamoDBProvider {
     return this.items.get(itemKey) as T;
   }
   
-  async putItem<T extends object>(tableName: string, item: T, keyName: string, userRegion: string): Promise<T | null> {
+  async putItem<T extends object>(tableName: string, item: T, keyName: string, _userRegion: string): Promise<T | null> { // userRegion prefixed
     // Clone the item to simulate serialization/deserialization
     const itemToStore = JSON.parse(JSON.stringify(item));
     // Create a key from table name and the item's key value
@@ -48,7 +48,7 @@ class MockDynamoDBProvider {
     keyAttributeName: string, 
     logicalId: string, 
     updates: Partial<T>, 
-    userRegion: string
+    _userRegion: string // userRegion prefixed
   ): Promise<Partial<T> | null> {
     const itemKey = `${tableName}:${logicalId}`;
     
@@ -69,7 +69,7 @@ class MockDynamoDBProvider {
     tableName: string, 
     keyAttributeName: string, 
     logicalId: string, 
-    userRegion: string
+    _userRegion: string // userRegion prefixed
   ): Promise<boolean> {
     const itemKey = `${tableName}:${logicalId}`;
     
@@ -81,7 +81,7 @@ class MockDynamoDBProvider {
   
   async query<T extends object>(
     tableName: string, 
-    queryParams: unknown
+    _queryParams: unknown // queryParams prefixed
   ): Promise<T[] | null> {
     // Simple implementation - we'll just return all items from the table
     // since we're not implementing full query expressions

@@ -93,9 +93,9 @@ describe('OpenAIModelProvider', () => {
       const mockRequest: AIModelRequest = { prompt: 'Hello', context: mockContext };
       // Simulate an API error from the OpenAI SDK (structure might vary, this is a simplified mock)
       const apiError = new Error("Mock OpenAI API Error");
-      // @ts-ignore
+      // @ts-expect-error
       apiError.status = 400; 
-      // @ts-ignore
+      // @ts-expect-error
       apiError.code = 'invalid_request_error';
       mockOpenAIClient.chat.completions.create.mockRejectedValue(apiError);
       

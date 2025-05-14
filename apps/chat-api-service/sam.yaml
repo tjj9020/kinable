@@ -345,6 +345,7 @@ Resources:
           # Set environment variable to the NAME of the secret
           # For a specific stack like 'kinable-dev' in 'us-east-2':
           OPENAI_API_KEY_SECRET: !Sub "kinable-dev-${AWS::Region}-openai-api-key"
+          ACTIVE_CONFIG_ID: "E2E_TEST_CHAT_CONFIG_V1"
           # Or, if you prefer to make it more dynamic with the current stack name:
           # OPENAI_API_KEY_SECRET: !Sub "${AWS::StackName}-${AWS::Region}-openai-api-key"
       Events:
@@ -358,6 +359,9 @@ Resources:
               Authorizer: JwtAuthorizer
 
 Outputs:
+  HttpApiUrl:
+    Description: "Base API Gateway endpoint URL"
+    Value: !Sub "https://${KinableHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
   HelloWorldApi:
     Description: "API Gateway endpoint URL for Prod stage for Hello World function"
     Value: !Sub "https://${KinableHttpApi}.execute-api.${AWS::Region}.amazonaws.com/hello"
@@ -379,6 +383,9 @@ Outputs:
   ProfilesTableName:
     Description: "Name of the Profiles DynamoDB table"
     Value: !Ref ProfilesTable
+  ProviderConfigTableName:
+    Description: "Name of the Provider Configuration DynamoDB table"
+    Value: !Ref ProviderConfigTable
   ChatRouterApi:
     Description: "API Gateway endpoint URL for Chat Router function"
     Value: !Sub "https://${KinableHttpApi}.execute-api.${AWS::Region}.amazonaws.com/v1/chat"

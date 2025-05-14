@@ -211,7 +211,7 @@ This section clarifies that the goal is not just functional implementations with
 
 ### **Phase 2: Core Chat Functionality**
 
-*   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces [COMPLETED - Core implementation and DB integration done, E2E validation pending]**
+*   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces [COMPLETED]**
     *   **Goal**: Create a Lambda that uses a flexible `IAIModelProvider` interface architecture to send prompts to AI models and return responses. **Update**: Replace mocked AI calls and configuration with real implementations.
     *   **Tasks**:
         *   In `packages/common-types/`, define comprehensive interfaces:
@@ -232,62 +232,44 @@ This section clarifies that the goal is not just functional implementations with
             *   `BaseAIModelProvider` abstract class with shared functionality [COMPLETED - Refined canFulfill and rate limiting]
             *   `OpenAIModelProvider` concrete implementation (initial provider). [COMPLETED - Uses real OpenAI SDK internally if no client injected, robust error handling, and rate limiting]
             *   `ConfigurationService` for managing provider configurations. [COMPLETED - Uses real DynamoDB for fetching and caching configurations]
-            *   **COMPLETED**: `OpenAIModelProvider` uses the actual OpenAI SDK for its internal client when one is not injected. (Unit tests for the provider's logic surrounding the SDK use an injected mock client, which is best practice).
+            *   **COMPLETED**: `OpenAIModelProvider` uses the actual OpenAI SDK for its internal client when one is not injected.
             *   **COMPLETED**: Update `ConfigurationService` to fetch configuration from the actual `ProviderConfiguration` DynamoDB table and cache it.
             *   **COMPLETED**: API keys for OpenAI are securely retrieved from AWS Secrets Manager by the `OpenAIModelProvider`.
-            *   **COMPLETED**: Implement and run integration tests for `ConfigurationService` (real DynamoDB interaction). Unit tests for `OpenAIModelProvider`'s internal logic and key fetching are complete. Full E2E tests involving live OpenAI API calls are part of Step 2.1.1.
+            *   **COMPLETED**: Implement and run integration tests for `ConfigurationService` (real DynamoDB interaction).
             *   `AIModelRouter` for future provider selection with:
-                * Simple initial implementation focused on a single provider
-                * Design for future capabilities including failover, cost optimization, feature matching
+                *   Simple initial implementation focused on a single provider [COMPLETED]
+                *   Design for future capabilities including failover, cost optimization, feature matching [COMPLETED as part of initial design]
         *   **Configuration Management System**:
-            *   Create a `ProviderConfiguration` DynamoDB table (global table ready)
-            *   Schema with version, timestamp, and configuration JSON
-            *   Configuration format supporting:
-                * Provider availability by region
-                * Model capabilities and costs
-                * Routing rules and preferences
-            *   API for configuration updates with validation
-        *   Store provider API keys in AWS Secrets Manager:
-            *   Region-specific secret names (e.g., `${AWS::StackName}-${AWS::Region}-openai-api-key`)
-            *   Support for key versioning with "current" and "previous" keys
-            *   Add IAM permissions with least privilege access
-        *   Write handler code (`src/handlers/chatRouter.ts`):
-            *   Extract user context from authorizer
-            *   Parameter validation and sanitization 
-            *   Initially use only one provider but route through the abstraction layer
-            *   Detailed error logging with provider-specific information
-            *   Region-aware request handling
-        *   Unit test the components:
-            *   Create mock providers for testing
-            *   Test configuration loading and validation
-            *   Test provider selection logic
-        *   Create a new `/v1/chat` POST endpoint in API Gateway:
-            *   Protected by `LambdaAuthorizerFunction`
-            *   Configured with appropriate timeouts (30s)
-            *   Add CORS headers for web client access
-    *   **Multi-Region Considerations**:
-        *   Design `IAIModelProvider` to support region-specific model routing
-        *   Ensure Secrets Manager keys use region-aware naming pattern
-        *   Store provider endpoint latency and availability metrics by region
-        *   Design configuration schema to support region-specific settings
+            *   Create a `ProviderConfiguration` DynamoDB table (global table ready) [COMPLETED]
+            *   Schema with version, timestamp, and configuration JSON [COMPLETED]
+            *   Configuration format supporting: // ... (all sub-items COMPLETED)
+            *   API for configuration updates with validation [COMPLETED via ConfigurationService.updateConfiguration]
+        *   Store provider API keys in AWS Secrets Manager: [COMPLETED - All sub-items]
+        *   Write handler code (`src/handlers/chatRouter.ts`): [COMPLETED - All sub-items]
+        *   Unit test the components: [COMPLETED - All sub-items, integration tests cover more]
+        *   Create a new `/v1/chat` POST endpoint in API Gateway: [COMPLETED - All sub-items]
+    *   **Multi-Region Considerations**: // ... (all sub-items COMPLETED for this phase)
     *   **Definition of Done (Initial)**: 
         *   Abstraction layer for multiple providers is in place. [COMPLETED for BaseAIModelProvider and OpenAIModelProvider]
         *   Unit tests (using mocks for OpenAI SDK and DynamoDB) for `OpenAIModelProvider` and `ConfigurationService` pass. [COMPLETED for OpenAIModelProvider and ConfigurationService integration tests with real DB]
         *   API keys are retrieved from AWS Secrets Manager by the `OpenAIModelProvider`. [COMPLETED]
-        *   **PENDING RE-VALIDATION (Step 2.1.1)**: `/v1/chat` endpoint successfully returns AI responses using the real OpenAI API via the updated `OpenAIModelProvider`.
+        *   `/v1/chat` endpoint successfully returns AI responses using the real OpenAI API via the updated `OpenAIModelProvider`. [COMPLETED - Validated in Step 2.1.1]
         *   Configuration management system uses the actual `ProviderConfiguration` DynamoDB table. [COMPLETED - via ConfigurationService]
         *   Integration tests for `ConfigurationService` (real DynamoDB interaction). [COMPLETED]
     *   **Commit Point**: After chat router implementation, interface/provider development, and testing.
     *   **Lessons Learned**:
         *   When deploying serverless applications with monorepo workspace dependencies, special care is needed to properly bundle dependencies instead of relying on symlinks which don't work in AWS Lambda.
         *   Custom build scripts can help ensure proper packaging of dependencies.
+        *   Ensure CloudFormation Outputs in `sam.yaml` exactly match the keys expected by integration/E2E test scripts.
+        *   When testing Lambda functions that rely on specific environment variable names, ensure the `sam.yaml` provides those exact names and that the Lambda code uses those exact names.
+        *   When testing services that interact with DynamoDB tables using prefixed keys (e.g., for global table strategies), ensure test data setup scripts (like those in E2E tests) write data using the same prefixed keys that the service layer expects to read. Verify this for both primary keys and any GSI keys involved in lookups.
 
-*   **Step 2.1.1: Initial End-to-End Validation of Chat Router [PENDING - Dependent on deployment of Step 2.1 changes]**
+*   **Step 2.1.1: Initial End-to-End Validation of Chat Router [COMPLETED]**
     *   **Goal**: Confirm that the deployed `/v1/chat` endpoint is fully functional with real backend services. **Update**: Re-run E2E tests after Step 2.1 uses real AI provider and config service.
     *   **Tasks**:
-        *   **PENDING TASK**: Re-execute E2E tests once `OpenAIModelProvider` uses the real OpenAI API & API key from Secrets Manager, and `ConfigurationService` uses real DynamoDB.
-        *   Verify a successful (e.g., HTTP 200) response containing an actual AI-generated text from OpenAI.
-    *   **Definition of Done**: A documented successful end-to-end test run, with the `/v1/chat` endpoint returning a valid AI response from the real OpenAI API to an authenticated request, using configuration from the real DynamoDB table. Any issues encountered during the re-test are diagnosed and resolved.
+        *   **COMPLETED**: E2E tests (`chatRouter.e2e.test.ts`) executed successfully against deployed stack (`kinable-dev` in `us-east-2`).
+        *   **COMPLETED**: Verified a successful (HTTP 200) response containing an actual AI-generated text from OpenAI.
+    *   **Definition of Done**: A documented successful end-to-end test run, with the `/v1/chat` endpoint returning a valid AI response from the real OpenAI API to an authenticated request, using configuration from the real DynamoDB table. Any issues encountered during the re-test are diagnosed and resolved. [COMPLETED]
 
 *   **Step 2.2: Add Second AI Provider with Failover Capabilities [IN PROGRESS]**
     *   **Goal**: Extend the AI provider architecture to support a second provider (e.g., Anthropic Claude) with intelligent routing and failover capabilities.

@@ -1,6 +1,7 @@
 import { CognitoAuthProvider } from './CognitoAuthProvider';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { IUserIdentity } from '@kinable/common-types';
+import { JwtInvalidSignatureError } from 'aws-jwt-verify/error';
 
 // Mock the CognitoJwtVerifier
 const mockVerify = jest.fn();
@@ -69,7 +70,7 @@ describe('CognitoAuthProvider', () => {
 
   it('should return null if token verification fails', async () => {
     const mockToken = 'invalid.jwt.token';
-    mockVerify.mockRejectedValue(new Error('Invalid token'));
+    mockVerify.mockRejectedValue(new JwtInvalidSignatureError('Invalid signature'));
 
     const result = await authProvider.verifyToken(mockToken);
     expect(result).toBeNull();

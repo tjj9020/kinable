@@ -2,6 +2,20 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { IApiResponse, RequestContext } from '../../../../packages/common-types/src/core-interfaces';
 import { AIModelRequest } from '../../../../packages/common-types/src/ai-interfaces';
 import { AIModelRouter } from '../ai/AIModelRouter';
+import { DynamoDBProvider } from '../data/DynamoDBProvider';
+import { ConfigurationService } from '../ai/ConfigurationService';
+
+// Environment variables - consider defining these outside the handler for reuse if Lambda is configured for it
+const PROVIDER_CONFIG_TABLE_NAME = process.env.PROVIDER_CONFIG_TABLE_NAME;
+const ACTIVE_CONFIG_ID = process.env.ACTIVE_CONFIG_ID;
+const OPENAI_API_SECRET_ID = process.env.OPENAI_API_SECRET_ID;
+const SERVICE_REGION = process.env.AWS_REGION || 'us-east-2'; // Default if not set by Lambda environment
+
+// Initialize clients and services once per Lambda cold start if possible
+// For simplicity in this example, they are initialized per invocation, but can be moved outside handler
+let dbProvider: DynamoDBProvider;
+let configService: ConfigurationService;
+let router: AIModelRouter;
 
 /**
  * Main handler for the chat endpoint
@@ -10,6 +24,10 @@ export const handler = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
   console.log('ChatRouter handler invoked');
+  
+  // Note: Environment variable checks and service initialization are moved 
+  // to after basic request validation to prevent unnecessary instantiation 
+  // if the request is invalid early on.
   
   try {
     // Parse request body
@@ -28,6 +46,34 @@ export const handler = async (
     if (!requestBody.prompt) {
       return createErrorResponse(400, 'Prompt is required');
     }
+
+    // --- Dependency Initialization --- 
+    // Check for required environment variables for AI services
+    if (!PROVIDER_CONFIG_TABLE_NAME || !ACTIVE_CONFIG_ID || !OPENAI_API_SECRET_ID) {
+      console.error('Missing required environment variables for AI services configuration.');
+      return createErrorResponse(500, 'Internal server configuration error', 'CONFIG_ERROR');
+    }
+
+    // Initialize provider and services if not already initialized (for Lambda cold starts)
+    if (!dbProvider) { 
+      dbProvider = new DynamoDBProvider(SERVICE_REGION);
+    }
+    if (!configService) { 
+      configService = new ConfigurationService(
+        dbProvider,
+        PROVIDER_CONFIG_TABLE_NAME,
+        SERVICE_REGION,
+        ACTIVE_CONFIG_ID
+      );
+    }
+    if (!router) { 
+      router = new AIModelRouter(
+        configService,
+        OPENAI_API_SECRET_ID,
+        SERVICE_REGION
+      );
+    }
+    // --- End Dependency Initialization ---
     
     // Extract context from authorizer
     const authContext = event.requestContext.authorizer || {};
@@ -54,9 +100,6 @@ export const handler = async (
       requiredCapabilities: requestBody.capabilities || [],
       context: requestContext
     };
-    
-    // Get router instance
-    const router = new AIModelRouter();
     
     // Route the request
     const result = await router.routeRequest(modelRequest);

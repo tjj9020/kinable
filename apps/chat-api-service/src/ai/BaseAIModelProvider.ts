@@ -41,17 +41,21 @@ export abstract class BaseAIModelProvider implements IAIModelProvider {
    * @param request The request to check
    */
   canFulfill(request: AIModelRequest): boolean {
+    const modelName = request.preferredModel || this.getDefaultModel();
+    const capabilities = this.getModelCapabilities(modelName);
+
+    // Check if capabilities object is empty (no capabilities defined for the model)
+    if (Object.keys(capabilities).length === 0) {
+      return false; // Model is not supported
+    }
+
     // Basic availability check
     if (!this.healthStatus.available) {
       return false;
     }
     
-    // Check if we have capacity in our token bucket
-    this.refillTokenBucket();
-    const estimatedTokens = this.estimateTokens(request);
-    if (this.tokenBucket.tokens < estimatedTokens) {
-      return false;
-    }
+    // Token bucket check removed from canFulfill
+    // The consumeTokens method, called later in generateResponse, will handle rate limiting.
     
     // Check if tools are provided but not supported
     if (request.tools && request.tools.length > 0) {

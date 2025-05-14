@@ -14,16 +14,25 @@ import { OpenAIModelProvider } from './OpenAIModelProvider';
 export class AIModelRouter {
   private providers: Map<string, IAIModelProvider> = new Map();
   private configService: ConfigurationService;
+  private openAISecretId: string;
+  private awsClientRegion: string;
   
   /**
    * Create a new AIModelRouter
-   * In production, providers would be initialized lazily with keys from Secrets Manager
+   * @param configService An instance of ConfigurationService.
+   * @param openAISecretId The AWS Secrets Manager secret ID for the OpenAI API key.
+   * @param awsClientRegion The AWS region for AWS service clients.
+   * @param initialProviders Optional initial providers.
    */
   constructor(
-    configService = ConfigurationService.getInstance(),
+    configService: ConfigurationService, // Made required
+    openAISecretId: string,          // Added
+    awsClientRegion: string,         // Added
     initialProviders: Record<string, IAIModelProvider> = {}
   ) {
     this.configService = configService;
+    this.openAISecretId = openAISecretId;
+    this.awsClientRegion = awsClientRegion;
     
     // Add any initial providers
     Object.entries(initialProviders).forEach(([name, provider]) => {
@@ -32,15 +41,13 @@ export class AIModelRouter {
   }
   
   /**
-   * Initialize the OpenAI provider if it doesn't exist yet
-   * In production, this would fetch the key from Secrets Manager
+   * Initialize the OpenAI provider if it doesn't exist yet.
+   * Uses secretId and region provided in the constructor.
    */
   private async initializeOpenAI(): Promise<OpenAIModelProvider> {
     if (!this.providers.has('openai')) {
-      // In production, get the key from Secrets Manager
-      // For now, use a placeholder key
-      const mockApiKey = 'sk-mock-key-12345';
-      const provider = new OpenAIModelProvider(mockApiKey);
+      // const mockApiKey = 'sk-mock-key-12345'; // Removed mock key
+      const provider = new OpenAIModelProvider(this.openAISecretId, this.awsClientRegion);
       this.providers.set('openai', provider);
     }
     

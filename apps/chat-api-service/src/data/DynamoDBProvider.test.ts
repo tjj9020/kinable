@@ -92,20 +92,20 @@ describe('DynamoDBProvider', () => {
       expect(result).toEqual(mockItem);
       expect(mockSend).toHaveBeenCalledWith(expect.any(GetCommand));
       const commandInstance = mockSend.mock.calls[0][0];
-      expect(commandInstance.input).toEqual({ TableName: familiesTableName, Key: { [familyKeyAttr]: expectedFamilyKeyVal } });
+      expect(commandInstance.input).toEqual({ TableName: familiesTableName, Key: { [familyKeyAttr]: expectedFamilyKeyVal }, ConsistentRead: true });
     });
 
     it('should retrieve a profile item successfully with regionalized key', async () => {
-        const mockItem = { [profileKeyAttr]: expectedProfileKeyVal, data: 'testData' };
-        mockSend.mockResolvedValueOnce({ Item: mockItem });
+      const mockItem = { [profileKeyAttr]: expectedProfileKeyVal, data: 'testData' };
+      mockSend.mockResolvedValueOnce({ Item: mockItem });
   
-        const result = await provider.getItem(profilesTableName, profileKeyAttr, logicalProfileId, userRegion);
+      const result = await provider.getItem(profilesTableName, profileKeyAttr, logicalProfileId, userRegion);
   
-        expect(result).toEqual(mockItem);
-        expect(mockSend).toHaveBeenCalledWith(expect.any(GetCommand));
-        const commandInstance = mockSend.mock.calls[0][0];
-        expect(commandInstance.input).toEqual({ TableName: profilesTableName, Key: { [profileKeyAttr]: expectedProfileKeyVal } });
-      });
+      expect(result).toEqual(mockItem);
+      expect(mockSend).toHaveBeenCalledWith(expect.any(GetCommand));
+      const commandInstance = mockSend.mock.calls[0][0];
+      expect(commandInstance.input).toEqual({ TableName: profilesTableName, Key: { [profileKeyAttr]: expectedProfileKeyVal }, ConsistentRead: true });
+    });
 
     it('should return null if item is not found', async () => {
       mockSend.mockResolvedValueOnce({ Item: undefined });

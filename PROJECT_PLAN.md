@@ -211,7 +211,7 @@ This section clarifies that the goal is not just functional implementations with
 
 ### **Phase 2: Core Chat Functionality**
 
-*   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces [PARTIALLY COMPLETED - Critical Mocks in Use for AI Provider & Config]**
+*   **Step 2.1: Develop Chat Router Lambda (Single Model) with Interfaces [PARTIALLY COMPLETED - AI Provider core logic enhanced, ConfigurationService mock in use]**
     *   **Goal**: Create a Lambda that uses a flexible `IAIModelProvider` interface architecture to send prompts to AI models and return responses. **Update**: Replace mocked AI calls and configuration with real implementations.
     *   **Tasks**:
         *   In `packages/common-types/`, define comprehensive interfaces:
@@ -229,14 +229,13 @@ This section clarifies that the goal is not just functional implementations with
                 * Standard: `text`, `tokens.prompt`, `tokens.completion`, `tokens.total`
                 * Provider metadata: `provider.name`, `provider.model`, `provider.features`
                 * Performance: `latency`, `timestamp`, `region`
-        *   Create a robust provider architecture in `apps/chat-api-service/src/ai/`:
-            *   `BaseAIModelProvider` abstract class with shared functionality
-            *   `OpenAIModelProvider` concrete implementation (initial provider). **Note**: Current implementation uses mocked API calls.
+            *   `BaseAIModelProvider` abstract class with shared functionality [COMPLETED - Refined canFulfill and rate limiting]
+            *   `OpenAIModelProvider` concrete implementation (initial provider). [COMPLETED - Uses real OpenAI SDK internally if no client injected, robust error handling, and rate limiting]
             *   `ConfigurationService` for managing provider configurations. **Note**: Current implementation uses in-memory default config.
-            *   **Pending Task**: Update `OpenAIModelProvider` to use the actual OpenAI SDK, making real API calls.
+            *   **COMPLETED**: `OpenAIModelProvider` uses the actual OpenAI SDK for its internal client when one is not injected. (Unit tests for the provider's logic surrounding the SDK use an injected mock client, which is best practice).
             *   **Pending Task**: Update `ConfigurationService` to fetch configuration from the actual `ProviderConfiguration` DynamoDB table and cache it.
-            *   **Pending Task**: Ensure API keys for OpenAI are securely retrieved from AWS Secrets Manager by the `OpenAIModelProvider`.
-            *   **Pending Task**: Implement and run integration tests for `OpenAIModelProvider` (real API calls) and `ConfigurationService` (real DynamoDB interaction).
+            *   **COMPLETED**: API keys for OpenAI are securely retrieved from AWS Secrets Manager by the `OpenAIModelProvider`.
+            *   **Pending Task**: Implement and run integration tests for `ConfigurationService` (real DynamoDB interaction). Unit tests for `OpenAIModelProvider`'s internal logic and key fetching are complete. Full E2E tests involving live OpenAI API calls are part of Step 2.1.1.
             *   `AIModelRouter` for future provider selection with:
                 * Simple initial implementation focused on a single provider
                 * Design for future capabilities including failover, cost optimization, feature matching
@@ -272,12 +271,12 @@ This section clarifies that the goal is not just functional implementations with
         *   Store provider endpoint latency and availability metrics by region
         *   Design configuration schema to support region-specific settings
     *   **Definition of Done (Initial)**: 
-        *   Abstraction layer for multiple providers is in place.
-        *   Unit tests (using mocks for OpenAI SDK and DynamoDB) for `OpenAIModelProvider` and `ConfigurationService` pass.
-        *   **Pending**: `/v1/chat` endpoint successfully returns AI responses using the real OpenAI API via the updated `OpenAIModelProvider`.
+        *   Abstraction layer for multiple providers is in place. [COMPLETED for BaseAIModelProvider and OpenAIModelProvider]
+        *   Unit tests (using mocks for OpenAI SDK and DynamoDB) for `OpenAIModelProvider` and `ConfigurationService` pass. [COMPLETED for OpenAIModelProvider, Pending for ConfigurationService against real DB]
+        *   API keys are retrieved from AWS Secrets Manager by the `OpenAIModelProvider`. [COMPLETED]
+        *   **Pending**: `/v1/chat` endpoint successfully returns AI responses using the real OpenAI API via the updated `OpenAIModelProvider` (depends on `ConfigurationService` and router logic).
         *   **Pending**: Configuration management system uses the actual `ProviderConfiguration` DynamoDB table, not mock data, via the updated `ConfigurationService`.
-        *   **Pending**: API keys are retrieved from AWS Secrets Manager by the `OpenAIModelProvider`.
-        *   **Pending**: Integration tests confirm real API communication with OpenAI and real DynamoDB interaction for configuration.
+        *   **Pending**: Integration tests for `ConfigurationService` (real DynamoDB interaction). Unit tests for `OpenAIModelProvider` logic are complete.
     *   **Commit Point**: After chat router implementation, interface/provider development, and testing.
     *   **Lessons Learned**:
         *   When deploying serverless applications with monorepo workspace dependencies, special care is needed to properly bundle dependencies instead of relying on symlinks which don't work in AWS Lambda.

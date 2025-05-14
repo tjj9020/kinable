@@ -1,14 +1,13 @@
-import { handler } from './chatRouter';
 import { AIModelRouter } from '../ai/AIModelRouter';
-import { APIGatewayProxyEvent } from 'aws-lambda';
+import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { AIModelResult } from '../../../../packages/common-types/src/ai-interfaces';
 
-// Mock AIModelRouter
+// Mock AIModelRouter - This mock will be active for dynamic imports after jest.resetModules()
 jest.mock('../ai/AIModelRouter', () => {
   return {
     AIModelRouter: jest.fn().mockImplementation(() => {
       return {
-        routeRequest: jest.fn()
+        routeRequest: jest.fn() // Default instance mock
       };
     })
   };
@@ -43,13 +42,36 @@ const createMockEvent = (body: Record<string, any> = {}, authorizer: Record<stri
 describe('ChatRouter Handler', () => {
   let mockEvent: APIGatewayProxyEvent;
   let mockRouteRequest: jest.Mock;
-  
-  beforeEach(() => {
-    jest.clearAllMocks();
+  // Define handler type. It will be dynamically imported.
+  let handler: (event: APIGatewayProxyEvent) => Promise<APIGatewayProxyResult>; 
+  let ActualMockedAIModelRouterConstructor: jest.Mock; // To store the dynamically imported mock constructor
+
+  beforeEach(async () => {
+    // Set environment variables *before* resetting and importing modules
+    process.env.AWS_REGION = 'us-east-2';
+    process.env.PROVIDER_CONFIG_TABLE_NAME = 'test-provider-config-table';
+    process.env.ACTIVE_CONFIG_ID = 'test-active-config-id';
+    process.env.OPENAI_API_SECRET_ID = 'test-openai-secret-id';
+
+    // Reset modules to ensure chatRouter is loaded with the above env vars
+    // and that it picks up a fresh version of the AIModelRouter mock.
+    jest.resetModules();
+
+    // Dynamically import the handler *after* env vars are set and modules reset
+    const chatRouterModule = await import('./chatRouter');
+    handler = chatRouterModule.handler;
+
+    // Dynamically import the AIModelRouter mock. This is the constructor that the handler will use.
+    const { AIModelRouter: DynamicallyImportedMockRouter } = await import('../ai/AIModelRouter');
+    ActualMockedAIModelRouterConstructor = DynamicallyImportedMockRouter as jest.Mock;
     
-    // Mock the router instance
+    // Clear any previous calls on mocks from other tests.
+    // This specifically clears calls on ActualMockedAIModelRouterConstructor and its instances.
+    jest.clearAllMocks(); 
+
+    // Prepare the mock for routeRequest for instances created by ActualMockedAIModelRouterConstructor
     mockRouteRequest = jest.fn();
-    (AIModelRouter as jest.Mock).mockImplementation(() => {
+    ActualMockedAIModelRouterConstructor.mockImplementation(() => {
       return {
         routeRequest: mockRouteRequest
       };
@@ -68,9 +90,7 @@ describe('ChatRouter Handler', () => {
         profileId: 'test-profile'
       }
     );
-    
-    // Set environment variable
-    process.env.AWS_REGION = 'us-east-2';
+    // Note: Environment variables are set above, before module import.
   });
   
   test('should return 400 when request body is missing', async () => {
@@ -81,7 +101,8 @@ describe('ChatRouter Handler', () => {
     
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body).message).toBe('Request body is required');
-    expect(AIModelRouter).not.toHaveBeenCalled();
+    // Use the dynamically imported mock constructor for assertion
+    expect(ActualMockedAIModelRouterConstructor).not.toHaveBeenCalled();
   });
   
   test('should return 400 when request body is invalid JSON', async () => {
@@ -91,7 +112,7 @@ describe('ChatRouter Handler', () => {
     
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body).message).toBe('Invalid JSON in request body');
-    expect(AIModelRouter).not.toHaveBeenCalled();
+    expect(ActualMockedAIModelRouterConstructor).not.toHaveBeenCalled();
   });
   
   test('should return 400 when prompt is missing', async () => {
@@ -108,7 +129,7 @@ describe('ChatRouter Handler', () => {
     
     expect(response.statusCode).toBe(400);
     expect(JSON.parse(response.body).message).toBe('Prompt is required');
-    expect(AIModelRouter).not.toHaveBeenCalled();
+    expect(ActualMockedAIModelRouterConstructor).not.toHaveBeenCalled();
   });
   
   test('should return successful response from the AI model', async () => {
@@ -144,7 +165,7 @@ describe('ChatRouter Handler', () => {
     expect(parsedBody.data.tokenUsage.total).toBe(30);
     
     // Verify router was called with the correct request
-    expect(AIModelRouter).toHaveBeenCalledTimes(1);
+    expect(ActualMockedAIModelRouterConstructor).toHaveBeenCalledTimes(1);
     expect(mockRouteRequest).toHaveBeenCalledTimes(1);
     expect(mockRouteRequest.mock.calls[0][0]).toMatchObject({
       prompt: 'Hello, world!',
@@ -183,7 +204,7 @@ describe('ChatRouter Handler', () => {
     expect(parsedBody.error.code).toBe('CONTENT');
     
     // Verify router was called
-    expect(AIModelRouter).toHaveBeenCalledTimes(1);
+    expect(ActualMockedAIModelRouterConstructor).toHaveBeenCalledTimes(1);
     expect(mockRouteRequest).toHaveBeenCalledTimes(1);
   });
   

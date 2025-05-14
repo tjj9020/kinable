@@ -1,36 +1,58 @@
 import { 
   ProviderConfiguration, 
   DEFAULT_ROUTING_WEIGHTS,
-  validateConfiguration
+  validateConfiguration,
+  IDatabaseProvider
 } from '@kinable/common-types';
+
+const PROVIDER_CONFIG_TABLE_KEY_NAME = 'configId';
+// const ACTIVE_CONFIG_ID = 'ACTIVE_CONFIG_V1'; // Example ID for the active configuration document - REMOVED
 
 /**
  * Service for managing provider configurations
- * In production, this would fetch from DynamoDB or another source
+ * Fetches configuration from a specified DynamoDB table.
  */
 export class ConfigurationService {
-  private static instance: ConfigurationService;
+  // private static instance: ConfigurationService; // Removing singleton for now
   private config: ProviderConfiguration;
   private lastFetched: number = 0;
   private cacheTtlMs: number = 60000; // 1 minute
-  
+
+  private dbProvider: IDatabaseProvider;
+  private providerConfigTableName: string;
+  private serviceRegion: string;
+  private activeConfigId: string; // Added activeConfigId member
+
   /**
-   * Private constructor for singleton pattern
+   * Constructor for ConfigurationService.
+   * @param dbProvider Instance of IDatabaseProvider to interact with DynamoDB.
+   * @param providerConfigTableName The name of the DynamoDB table storing provider configurations.
+   * @param serviceRegion The AWS region the service is operating in.
+   * @param activeConfigId The ID of the configuration document to fetch from the table.
    */
-  private constructor() {
-    // Initialize with default configuration
+  constructor(
+    dbProvider: IDatabaseProvider, 
+    providerConfigTableName: string, 
+    serviceRegion: string,
+    activeConfigId: string // Added activeConfigId parameter
+  ) {
+    this.dbProvider = dbProvider;
+    this.providerConfigTableName = providerConfigTableName;
+    this.serviceRegion = serviceRegion; 
+    this.activeConfigId = activeConfigId; // Store activeConfigId
+    // Initialize with default configuration, will be overwritten by first fetch
     this.config = this.getDefaultConfiguration();
   }
   
   /**
-   * Get the singleton instance
+   * Get the singleton instance - REMOVED for now, instantiate directly
    */
-  public static getInstance(): ConfigurationService {
-    if (!ConfigurationService.instance) {
-      ConfigurationService.instance = new ConfigurationService();
-    }
-    return ConfigurationService.instance;
-  }
+  // public static getInstance(): ConfigurationService {
+  //   if (!ConfigurationService.instance) {
+  //     ConfigurationService.instance = new ConfigurationService();
+  //   }
+  //   return ConfigurationService.instance;
+  // }
   
   /**
    * Get the current configuration
@@ -81,10 +103,33 @@ export class ConfigurationService {
    */
   private async fetchConfiguration(): Promise<ProviderConfiguration> {
     // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // await new Promise(resolve => setTimeout(resolve, 100)); // Keep for testing if needed, but primary path is DB
     
-    // For now, return the default configuration
-    return this.getDefaultConfiguration();
+    // For now, return the default configuration - This will be replaced by DynamoDB fetch
+    // return this.getDefaultConfiguration();
+
+    try {
+      const configItem = await this.dbProvider.getItem<{ configData: ProviderConfiguration }>(
+        this.providerConfigTableName,
+        PROVIDER_CONFIG_TABLE_KEY_NAME, // keyAttributeName: 'configId'
+        this.activeConfigId,             // logicalId: Use the member variable
+        this.serviceRegion            // userRegion: Using serviceRegion, assuming config is not user-region specific in its key
+      );
+
+      if (configItem && configItem.configData) {
+        console.log(`Successfully fetched configuration '${this.activeConfigId}' from ${this.providerConfigTableName}`);
+        // The actual ProviderConfiguration object is expected to be nested under a property, e.g., 'configData'
+        // Adjust if the entire item IS the ProviderConfiguration
+        return configItem.configData as ProviderConfiguration;
+      } else {
+        console.warn(`Configuration '${this.activeConfigId}' not found in ${this.providerConfigTableName}. Using default configuration.`);
+        return this.getDefaultConfiguration();
+      }
+    } catch (error) {
+      console.error(`Error fetching configuration '${this.activeConfigId}' from ${this.providerConfigTableName}:`, error);
+      console.warn('Using default configuration due to fetch error.');
+      return this.getDefaultConfiguration();
+    }
   }
   
   /**
@@ -179,19 +224,57 @@ export class ConfigurationService {
   
   /**
    * Update the configuration
-   * In production, this would validate and write to DynamoDB
-   * @param config New configuration to apply
+   * This will validate and then write the configuration to DynamoDB
+   * and update the local cache.
+   * @param config The new configuration to set
    */
   public async updateConfiguration(config: ProviderConfiguration): Promise<void> {
-    // Validate configuration
+    // Validate the new configuration
     const errors = validateConfiguration(config);
     if (errors.length > 0) {
-      throw new Error(`Configuration validation failed: ${errors.join(', ')}`);
+      console.error('New configuration validation failed:', errors);
+      throw new Error(`Invalid configuration: ${errors.join(', ')}`);
     }
     
     // In production, this would write to DynamoDB
     // For now, just update the local cache
-    this.config = config;
-    this.lastFetched = Date.now();
+    // TODO: Implement writing to DynamoDB using this.dbProvider.putItem
+    // Example structure for item to put:
+    // const itemToPut = {
+    //   [PROVIDER_CONFIG_TABLE_KEY_NAME]: this.activeConfigId, // or a versioned ID
+    //   configData: config,
+    //   lastUpdated: new Date().toISOString()
+    // };
+    // await this.dbProvider.putItem(this.providerConfigTableName, itemToPut, PROVIDER_CONFIG_TABLE_KEY_NAME, this.serviceRegion);
+
+    // console.warn('ConfigurationService.updateConfiguration is not yet fully implemented to write to DynamoDB.');
+
+    try {
+      const itemToPut = {
+        [PROVIDER_CONFIG_TABLE_KEY_NAME]: this.activeConfigId, // Using the activeConfigId as the key for the config document
+        configData: config, // The actual configuration object
+        lastUpdated: new Date().toISOString(), // Timestamp for when this configuration was last updated
+        version: config.version // Storing version at the top level for easier querying/filtering if needed
+      };
+
+      await this.dbProvider.putItem(
+        this.providerConfigTableName,
+        itemToPut,
+        PROVIDER_CONFIG_TABLE_KEY_NAME, // The name of the partition key attribute
+        this.serviceRegion // The region for the DynamoDB operation (though table is global, provider needs region)
+      );
+      
+      console.log(`Successfully updated configuration '${this.activeConfigId}' in ${this.providerConfigTableName}`);
+      
+      // Update local cache only after successful DB write
+      this.config = config;
+      this.lastFetched = Date.now(); // Reset cache timer
+
+    } catch (error) {
+      console.error(`Error updating configuration '${this.activeConfigId}' in ${this.providerConfigTableName}:`, error);
+      // Decide on error handling: re-throw, or maybe use old config if critical?
+      // For now, re-throwing to make the caller aware.
+      throw new Error(`Failed to write configuration to DynamoDB: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 } 

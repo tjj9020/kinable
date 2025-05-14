@@ -2,6 +2,30 @@ import { APIGatewayRequestAuthorizerEventV2, APIGatewayAuthorizerResultContext }
 import { IUserIdentity, ProfileData, FamilyData } from '@kinable/common-types';
 import { generatePolicy } from '../authorizers/jwtAuthorizer';
 
+// Mock CognitoAuthProvider
+const mockCognitoVerifyToken = jest.fn();
+jest.mock('../auth/CognitoAuthProvider', () => {
+  return {
+    CognitoAuthProvider: jest.fn().mockImplementation(() => {
+      return {
+        verifyToken: mockCognitoVerifyToken,
+      };
+    }),
+  };
+});
+
+// Mock DynamoDBProvider
+const mockDynamoGetItem = jest.fn();
+jest.mock('../data/DynamoDBProvider', () => {
+  return {
+    DynamoDBProvider: jest.fn().mockImplementation(() => {
+      return {
+        getItem: mockDynamoGetItem,
+      };
+    }),
+  };
+});
+
 // We're not going to use jest.mock() on CognitoAuthProvider
 // Instead, we'll directly inject our mock into jwtAuthorizer after importing it
 
@@ -56,7 +80,7 @@ const mockDefaultFamilyData: FamilyData = {
 };
 
 // Create a version of the jwtAuthorizer module that accepts test doubles
-const createTestableAuthorizer = (mockVerifyToken: jest.Mock, mockDbGetItem: jest.Mock) => {
+const createTestableAuthorizer = (mockVerifyTokenInjected: jest.Mock, mockDbGetItemInjected: jest.Mock) => {
   // This function implements the same logic as jwtAuthorizer but with injectable dependencies
   
   // Mocked environment variables for the testable authorizer context
@@ -76,7 +100,7 @@ const createTestableAuthorizer = (mockVerifyToken: jest.Mock, mockDbGetItem: jes
     const bearerToken = token.startsWith('Bearer ') ? token.substring(7) : token;
 
     try {
-      const userIdentity = await mockVerifyToken(bearerToken) as IUserIdentity | null;
+      const userIdentity = await mockVerifyTokenInjected(bearerToken) as IUserIdentity | null;
 
       if (userIdentity && userIdentity.isAuthenticated) {
         // === Start DB Checks ===
@@ -86,7 +110,7 @@ const createTestableAuthorizer = (mockVerifyToken: jest.Mock, mockDbGetItem: jes
         }
 
         try {
-          const profile = await mockDbGetItem(
+          const profile = await mockDbGetItemInjected(
             testableProfilesTableName, // Use mocked table name
             'profileId',
             userIdentity.profileId,
@@ -103,7 +127,7 @@ const createTestableAuthorizer = (mockVerifyToken: jest.Mock, mockDbGetItem: jes
             return generatePolicy(userIdentity.userId, 'Deny', event.routeArn, { message: 'Profile is paused.' });
           }
 
-          const family = await mockDbGetItem(
+          const family = await mockDbGetItemInjected(
             testableFamiliesTableName, // Use mocked table name
             'familyId',
             userIdentity.familyId,
@@ -153,6 +177,17 @@ describe('JWT Authorizer Lambda Handler', () => {
   beforeEach(() => {
     mockVerifyToken.mockReset();
     mockDbGetItem.mockReset(); // Reset db mock
+
+    // Reset mocks for actual handler testing (if any)
+    mockCognitoVerifyToken.mockReset();
+    mockDynamoGetItem.mockReset();
+
+    // Set environment variables that might be needed by actual CognitoAuthProvider or DynamoDBProvider constructor
+    process.env.AWS_REGION = 'us-east-1';
+    process.env.COGNITO_USER_POOL_ID = 'test-pool-id';
+    process.env.COGNITO_CLIENT_ID = 'test-client-id';
+    process.env.PROFILES_TABLE_NAME = 'TestProfilesTableFromEnv'; // Differentiate from hardcoded
+    process.env.FAMILIES_TABLE_NAME = 'TestFamiliesTableFromEnv';   // Differentiate from hardcoded
 
     // Default happy path for DB checks for most existing tests
     // It will be called twice: once for profile, once for family

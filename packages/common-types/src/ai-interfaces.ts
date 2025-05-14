@@ -17,6 +17,13 @@ export interface TokenUsage {
   total: number;
 }
 
+// Add ChatMessage interface here
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system'; // 'system' for system prompts
+  content: string;
+  // name?: string; // Optional: for tool/function call names, if needed later
+}
+
 // Tool/function calling
 export interface ToolCall {
   name: string;
@@ -54,8 +61,8 @@ export type AIModelResult = AIModelSuccess | AIModelError;
 
 // Request type for model generation
 export interface AIModelRequest {
-  prompt: string;
-  conversationId?: string;
+  prompt: string; // Current user prompt
+  conversationId?: string; 
   preferredProvider?: string;
   preferredModel?: string;
   maxTokens?: number;
@@ -63,10 +70,13 @@ export interface AIModelRequest {
   streaming?: boolean;
   tools?: ToolCall[];
   allowFallbackTools?: boolean;
-  requiredCapabilities?: string[];
+  requiredCapabilities?: string[]; 
   maxCostPerToken?: number;
   priority?: number;
-  context: RequestContext;
+  context: RequestContext & { // Extend RequestContext specifically for this request type
+    conversationHistory?: ChatMessage[];
+    // other existing fields from RequestContext like familyId, profileId, userRegion, etc.
+  };
 }
 
 // Provider capability and health information

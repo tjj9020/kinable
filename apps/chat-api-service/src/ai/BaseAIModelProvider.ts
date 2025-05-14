@@ -44,13 +44,21 @@ export abstract class BaseAIModelProvider implements IAIModelProvider {
     const modelName = request.preferredModel || this.getDefaultModel();
     const capabilities = this.getModelCapabilities(modelName);
 
+    console.log(`[BaseAIModelProvider.canFulfill DEBUG] For model: ${modelName}`,
+                `Capabilities received: ${JSON.stringify(capabilities)}`,
+                `Object.keys(capabilities): ${JSON.stringify(Object.keys(capabilities))}`,
+                `Object.keys(capabilities).length: ${Object.keys(capabilities).length}`
+    );
+
     // Check if capabilities object is empty (no capabilities defined for the model)
     if (Object.keys(capabilities).length === 0) {
+      console.log('[BaseAIModelProvider.canFulfill DEBUG] Returning false due to empty capabilities object.');
       return false; // Model is not supported
     }
 
     // Basic availability check
     if (!this.healthStatus.available) {
+      console.log('[BaseAIModelProvider.canFulfill DEBUG] Returning false due to healthStatus.available = false.');
       return false;
     }
     
@@ -63,6 +71,7 @@ export abstract class BaseAIModelProvider implements IAIModelProvider {
       const capabilities = this.getModelCapabilities(modelName);
       
       if (!capabilities.functionCalling) {
+        console.log('[BaseAIModelProvider.canFulfill DEBUG] Returning false due to tools requested but no functionCalling capability.');
         return false;
       }
     }
@@ -73,7 +82,7 @@ export abstract class BaseAIModelProvider implements IAIModelProvider {
       const capabilities = this.getModelCapabilities(modelName);
       
       // Check if all required capabilities are supported
-      return request.requiredCapabilities.every((capability: string) => {
+      const allRequiredSupported = request.requiredCapabilities.every((capability: string) => {
         switch (capability) {
           case 'reasoning':
             return capabilities.reasoning >= 3;
@@ -86,11 +95,17 @@ export abstract class BaseAIModelProvider implements IAIModelProvider {
           case 'streaming':
             return capabilities.streamingSupport;
           default:
+            console.log(`[BaseAIModelProvider.canFulfill DEBUG] Required capability '${capability}' not recognized or supported, returning false from .every().`);
             return false;
         }
       });
+      if (!allRequiredSupported) {
+        console.log('[BaseAIModelProvider.canFulfill DEBUG] Returning false due to some required capabilities not being met.');
+        return false;
+      }
     }
     
+    console.log('[BaseAIModelProvider.canFulfill DEBUG] Returning true.');
     return true;
   }
   

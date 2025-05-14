@@ -176,18 +176,31 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
     const startTime = Date.now();
     
     // Define a helper function to create request parameters
-    // This ensures it can be called consistently for initial attempt and retry
     const createChatCompletionParams = (currentRequest: AIModelRequest, currentModel: string): OpenAI.Chat.Completions.ChatCompletionCreateParams => {
-      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: 'user', content: currentRequest.prompt }
-        // TODO: Add support for conversation history if available in AIModelRequest
-      ];
+      const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+
+      // Add system message first, if present in history
+      const systemMessage = currentRequest.context.conversationHistory?.find(m => m.role === 'system');
+      if (systemMessage) {
+        messages.push({ role: 'system', content: systemMessage.content });
+      }
+
+      // Add other user/assistant messages from history, filtering out any additional system messages
+      currentRequest.context.conversationHistory?.forEach(histMsg => {
+        if (histMsg.role === 'user' || histMsg.role === 'assistant') {
+          messages.push({ role: histMsg.role, content: histMsg.content });
+        }
+      });
+
+      // Add current user prompt as the last message
+      messages.push({ role: 'user', content: currentRequest.prompt });
+      
       return {
         model: currentModel,
         messages: messages,
         max_tokens: currentRequest.maxTokens,
         temperature: currentRequest.temperature,
-        // stream: currentRequest.streaming // TODO: Enable once streaming flag is confirmed in AIModelRequest and full streaming is implemented
+        // stream: currentRequest.streaming // TODO: Enable once streaming flag is confirmed and full streaming is implemented
       };
     };
 

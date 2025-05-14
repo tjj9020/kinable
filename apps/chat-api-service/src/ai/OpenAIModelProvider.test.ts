@@ -146,6 +146,137 @@ describe('OpenAIModelProvider', () => {
       }
       expect(mockOpenAIClient.chat.completions.create).not.toHaveBeenCalled();
     });
+
+    // --- NEW TESTS FOR CONVERSATION HISTORY ---
+    describe('conversation history handling', () => {
+      test('should handle empty conversationHistory correctly (single prompt)', async () => {
+        const mockRequest: AIModelRequest = {
+          prompt: 'Current user prompt.',
+          context: { ...mockContext, conversationHistory: [] },
+          preferredModel: 'gpt-3.5-turbo'
+        };
+        const mockApiResponse = {
+          choices: [{ message: { content: 'Response to current prompt.' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
+          model: 'gpt-3.5-turbo',
+        };
+        mockOpenAIClient.chat.completions.create.mockResolvedValue(mockApiResponse);
+
+        await provider.generateResponse(mockRequest);
+
+        expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messages: [{ role: 'user', content: 'Current user prompt.' }],
+          })
+        );
+      });
+
+      test('should include user and assistant messages from conversationHistory', async () => {
+        const mockRequest: AIModelRequest = {
+          prompt: 'Latest user question.',
+          context: {
+            ...mockContext,
+            conversationHistory: [
+              { role: 'user', content: 'Previous user question.' },
+              { role: 'assistant', content: 'Previous assistant answer.' },
+            ],
+          },
+          preferredModel: 'gpt-3.5-turbo'
+        };
+        const mockApiResponse = {
+          choices: [{ message: { content: 'Response to latest question.' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 15, completion_tokens: 5, total_tokens: 20 },
+          model: 'gpt-3.5-turbo',
+        };
+        mockOpenAIClient.chat.completions.create.mockResolvedValue(mockApiResponse);
+
+        await provider.generateResponse(mockRequest);
+
+        expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messages: [
+              { role: 'user', content: 'Previous user question.' },
+              { role: 'assistant', content: 'Previous assistant answer.' },
+              { role: 'user', content: 'Latest user question.' },
+            ],
+          })
+        );
+      });
+
+      test('should place system message from conversationHistory first', async () => {
+        const mockRequest: AIModelRequest = {
+          prompt: 'User query.',
+          context: {
+            ...mockContext,
+            conversationHistory: [
+              { role: 'user', content: 'Older user message.' },
+              { role: 'system', content: 'System instruction.' },
+              { role: 'assistant', content: 'Older assistant reply.' },
+            ],
+          },
+          preferredModel: 'gpt-3.5-turbo'
+        };
+        const mockApiResponse = {
+          choices: [{ message: { content: 'Response to query.' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25 },
+          model: 'gpt-3.5-turbo',
+        };
+        mockOpenAIClient.chat.completions.create.mockResolvedValue(mockApiResponse);
+
+        await provider.generateResponse(mockRequest);
+
+        expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messages: [
+              { role: 'system', content: 'System instruction.' },
+              { role: 'user', content: 'Older user message.' },
+              { role: 'assistant', content: 'Older assistant reply.' },
+              { role: 'user', content: 'User query.' },
+            ],
+          })
+        );
+      });
+
+      test('should handle mixed conversation history and only one system message', async () => {
+        const mockRequest: AIModelRequest = {
+          prompt: 'Final user prompt.',
+          context: {
+            ...mockContext,
+            conversationHistory: [
+              { role: 'system', content: 'Initial system prompt.' },
+              { role: 'user', content: 'First user message.' },
+              { role: 'assistant', content: 'First assistant response.' },
+              { role: 'system', content: 'This system message should be ignored if one already processed.' },
+              { role: 'user', content: 'Second user message.' },
+            ],
+          },
+          preferredModel: 'gpt-3.5-turbo'
+        };
+         const mockApiResponse = {
+          choices: [{ message: { content: 'Final response.' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 25, completion_tokens: 5, total_tokens: 30 },
+          model: 'gpt-3.5-turbo',
+        };
+        mockOpenAIClient.chat.completions.create.mockResolvedValue(mockApiResponse);
+        
+        await provider.generateResponse(mockRequest);
+
+        expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            messages: [
+              { role: 'system', content: 'Initial system prompt.' },
+              { role: 'user', content: 'First user message.' },
+              { role: 'assistant', content: 'First assistant response.' },
+              // The second system message is filtered out by the implementation
+              { role: 'user', content: 'Second user message.' },
+              { role: 'user', content: 'Final user prompt.' },
+            ],
+          })
+        );
+      });
+    });
+    // --- END OF NEW TESTS ---
+
   });
 
   // --- Tests for when OpenAI client IS NOT INJECTED (existing key fetching logic) ---

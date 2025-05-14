@@ -137,8 +137,11 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
     }
 
     const modelToUse = request.preferredModel || this.getDefaultModel();
+    
     const estimatedPromptTokens = Math.ceil((request.prompt.length / 4));
-    const estimatedTotalTokens = estimatedPromptTokens + (request.maxTokens || (this.providerConfig?.models[modelToUse]?.contextSize || 1024) / 2);
+    // Use a reasonable default for completion tokens in estimation, similar to SDK call's default
+    const defaultMaxTokensForEstimation = 1024; 
+    const estimatedTotalTokens = estimatedPromptTokens + (request.maxTokens || defaultMaxTokensForEstimation);
 
     if (!this.consumeTokens(estimatedTotalTokens)) {
         this.updateHealthMetrics(false, 0);
@@ -154,20 +157,33 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
     let latencyMs = 0;
 
     try {
-      const messages: Anthropic.Messages.MessageParam[] = [
-        { role: 'user', content: request.prompt }
-        // TODO: Add support for conversation history if available in AIModelRequest
-      ];
+      // Construct messages array, including history if provided
+      const messages: Anthropic.Messages.MessageParam[] = [];
+      if (request.context.conversationHistory && request.context.conversationHistory.length > 0) {
+        request.context.conversationHistory.forEach(histMsg => {
+          // System messages are handled by the top-level `system` parameter for Anthropic.
+          // We only add 'user' or 'assistant' messages to the main messages array.
+          if (histMsg.role === 'user' || histMsg.role === 'assistant') {
+            messages.push({ role: histMsg.role, content: histMsg.content });
+          }
+        });
+      }
+      messages.push({ role: 'user', content: request.prompt }); // Current user prompt is always last
 
-      // stream: request.streaming, // TODO: Full streaming support
       const anthropicRequestParams: Anthropic.Messages.MessageCreateParams = {
         model: modelToUse,
         messages: messages,
-        max_tokens: request.maxTokens || 1024, // Anthropic requires max_tokens
+        max_tokens: request.maxTokens || 1024, 
         temperature: request.temperature,
-        // system: "System prompt if needed", // TODO: Add if system prompt becomes part of AIModelRequest
-        // tools: mappedTools, // TODO: Implement tool mapping
       };
+
+      // Handle system prompt: Anthropic SDK v0.20.0+ prefers it as a top-level parameter
+      const systemPromptMessage = request.context.conversationHistory?.find(m => m.role === 'system');
+      if (systemPromptMessage) {
+        anthropicRequestParams.system = systemPromptMessage.content;
+      } else {
+        anthropicRequestParams.system = undefined; // Explicitly set if no system message
+      }
       
       if (request.streaming) {
         // TODO: Implement streaming response handling for Anthropic
@@ -181,14 +197,25 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
       latencyMs = Date.now() - startTime;
       this.updateHealthMetrics(true, latencyMs);
 
-      if (!response.content || response.content.length === 0 || response.content[0].type !== 'text') {
-        throw new Error('Anthropic response format error: No text content found or unexpected content type.');
+      if (!response.content || response.content.length === 0) {
+        throw new Error('Anthropic response format error: No content found.');
       }
       if (!response.usage) {
         throw new Error('Anthropic response format error: No usage data.');
       }
 
-      const textResponse = response.content[0].text;
+      // Concatenate text from all 'text' type content blocks
+      const textResponse = response.content
+        .filter(block => block.type === 'text')
+        .map(block => (block as Anthropic.TextBlock).text)
+        .join('');
+
+      // Optional: Check if textResponse is empty even if content blocks existed but were not text
+      // This could be useful if we expect at least one text block or want to log such cases.
+      if (!textResponse && response.content.some(block => block.type !== 'text')) {
+        console.warn('[AnthropicModelProvider] Response contained content blocks, but no usable text was extracted.', response.content);
+        // Depending on requirements, you might want to throw an error here or allow empty string responses.
+      }
 
       return {
         ok: true,
@@ -234,9 +261,19 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
             retryable = false; // Usually indicates bad request input
         } else if (error instanceof Anthropic.InternalServerError) {
             errorCode = 'UNKNOWN'; // Could be retryable
+            retryable = true; // Explicitly set as potentially retryable
         } else {
             // Other Anthropic.APIError subtypes or generic APIError
-            retryable = status >= 500; // Crude retry logic for server-side errors
+            if (status && status >= 500) {
+                errorCode = 'UNKNOWN'; // Server-side, potentially retryable
+                retryable = true;
+            } else if (status && status >= 400 && status < 500) {
+                errorCode = 'CAPABILITY'; // Client-side error (4xx), treat as capability/bad request
+                retryable = false;
+            } else {
+                errorCode = 'UNKNOWN'; // Other/unknown status or no status
+                retryable = false; // Default to non-retryable if status is unclear
+            }
         }
         return this.createError(errorCode, `[AnthropicModelProvider] API Error: ${error.message}`, status, retryable);
       } else {

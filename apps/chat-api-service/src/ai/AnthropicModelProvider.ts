@@ -9,7 +9,8 @@ import {
   ProviderHealthStatus,
   AIModelError,
   AIModelSuccess,
-  ProviderLimits
+  ProviderLimits,
+  TokenUsage
 } from '../../../../packages/common-types/src/ai-interfaces';
 import { ProviderConfig } from '../../../../packages/common-types/src/config-schema';
 
@@ -20,47 +21,35 @@ interface ApiKeys { // Define a simple interface for the expected secret structu
   previous?: string; // Optional, though Anthropic provider might only use current
 }
 
-export class AnthropicModelProvider extends BaseAIModelProvider implements IAIModelProvider {
-  private anthropicClient: Anthropic | null = null;
-  private apiKey: string | null = null;
+export class AnthropicModelProvider extends BaseAIModelProvider {
   private secretId: string;
   private awsClientRegion: string;
   private providerConfig: ProviderConfig | null = null;
   private secretsManagerClient: SecretsManagerClient; // Add SecretsManagerClient instance
+  private currentApiKey?: string;
+  private previousApiKey?: string | null = null;
+  private anthropicClient!: Anthropic; // Definite assignment assertion if _ensureApiKeysLoaded guarantees it or throws
+  private clientProvided: boolean; // If an Anthropic client is injected directly
+  private keysLoaded: boolean = false;
+  private keyFetchPromise: Promise<void> | null = null;
 
-  constructor(secretId: string, awsClientRegion: string, providerConfig?: ProviderConfig) {
+  constructor(secretId: string, awsClientRegion: string, anthropicClientInstance?: Anthropic) {
     super(ANTHROPIC_PROVIDER_ID);
     this.secretId = secretId;
     this.awsClientRegion = awsClientRegion;
     this.secretsManagerClient = new SecretsManagerClient({ region: this.awsClientRegion }); // Initialize client
-    if (providerConfig) {
-      this.providerConfig = providerConfig;
+    if (anthropicClientInstance) {
+      this.anthropicClient = anthropicClientInstance;
+      this.clientProvided = true;
+      this.keysLoaded = true; 
+    } else {
+      // @ts-expect-error - anthropicClient will be initialized by _ensureApiKeysLoaded
+      this.anthropicClient = undefined; 
+      this.clientProvided = false;
     }
   }
 
-  public async initialize(): Promise<void> {
-    if (this.anthropicClient && this.apiKey) return; // Ensure API key is also checked
-
-    try {
-      this.apiKey = await this.loadApiKeyFromSecretsManager();
-      if (!this.apiKey) {
-        // Error already logged by loadApiKeyFromSecretsManager if it returns null due to fetch/parse error
-        // Throw a new error here to be caught by the surrounding try-catch for health status update
-        throw new Error('Anthropic API key could not be loaded from Secrets Manager.');
-      }
-      this.anthropicClient = new Anthropic({
-        apiKey: this.apiKey,
-      });
-      this.healthStatus = { ...this.healthStatus, available: true, lastChecked: Date.now(), errorRate: 0, latencyP95: 0 };
-    } catch (error: any) {
-      this.healthStatus = { ...this.healthStatus, available: false, lastChecked: Date.now(), errorRate: 1, latencyP95: -1 };
-      console.error(`[AnthropicModelProvider] Initialization failed: ${error.message}`);
-      // Do not re-throw here, let healthStatus reflect the issue.
-      // generateResponse will check healthStatus.
-    }
-  }
-
-  private async loadApiKeyFromSecretsManager(): Promise<string | null> {
+  private async _fetchAndParseApiKeys(): Promise<void> {
     try {
       const commandOutput: GetSecretValueCommandOutput = await this.secretsManagerClient.send(
         new GetSecretValueCommand({ SecretId: this.secretId })
@@ -69,21 +58,54 @@ export class AnthropicModelProvider extends BaseAIModelProvider implements IAIMo
       if (commandOutput.SecretString) {
         const secretJson = JSON.parse(commandOutput.SecretString) as ApiKeys;
         if (secretJson.current) {
-          return secretJson.current; // Successfully fetched and parsed the current key
+          this.currentApiKey = secretJson.current;
+          this.previousApiKey = secretJson.previous || null;
+          return;
+        } else {
+          throw new Error('Fetched secret does not contain a "current" API key.');
         }
-        // Consider if we need previous key logic like OpenAI for rotation, for now, just current.
-        console.error(`[AnthropicModelProvider] Fetched secret (SecretId: ${this.secretId}) does not contain a "current" API key.`);
-        throw new Error('Fetched secret does not contain a "current" API key.');
       } else {
-        console.error(`[AnthropicModelProvider] SecretString is empty or not found (SecretId: ${this.secretId}).`);
         throw new Error('SecretString is empty or not found in Secrets Manager response.');
       }
     } catch (error: any) {
-      console.error(`[AnthropicModelProvider] Failed to load or parse API key from Secrets Manager (SecretId: ${this.secretId}): ${error.message || error}`);
-      // Return null to indicate failure to the initialize method
-      // The initialize method will then throw a new error to be caught for health status update.
-      return null;
+      console.error(`Failed to fetch or parse API keys from Secrets Manager (secretId: ${this.secretId}):`, error);
+      throw new Error(`Failed to load API keys from Secrets Manager: ${error.message || error}`);
     }
+  }
+
+  private async _ensureApiKeysLoaded(): Promise<void> {
+    if (this.clientProvided) {
+      if (!this.anthropicClient) throw new Error('[AnthropicModelProvider] Client was marked as provided, but is missing.');
+      return;
+    }
+    if (this.keysLoaded && this.anthropicClient) {
+      return;
+    }
+    if (this.keyFetchPromise) {
+      await this.keyFetchPromise;
+      return;
+    }
+
+    this.keyFetchPromise = (async () => {
+      try {
+        await this._fetchAndParseApiKeys();
+        if (!this.currentApiKey) {
+          throw new Error('Current API key is missing after fetch attempt.');
+        }
+        // Initialize Anthropic client with the fetched API key
+        this.anthropicClient = new Anthropic({ apiKey: this.currentApiKey });
+        this.keysLoaded = true;
+      } catch (error) {
+        this.keysLoaded = false;
+        // @ts-expect-error - Client is intentionally undefined if key loading fails
+        this.anthropicClient = undefined;
+        console.error('Error ensuring Anthropic API keys are loaded:', error);
+        throw error;
+      } finally {
+        this.keyFetchPromise = null;
+      }
+    })();
+    await this.keyFetchPromise;
   }
 
   public setProviderConfig(providerConfig: ProviderConfig): void {
@@ -91,30 +113,38 @@ export class AnthropicModelProvider extends BaseAIModelProvider implements IAIMo
   }
 
   public async generateResponse(request: AIModelRequest): Promise<AIModelResult> {
-    if (!this.anthropicClient || !this.apiKey) {
-      await this.initialize();
-      if (!this.anthropicClient || !this.apiKey) {
-        return this.createError(
-          'AUTH',
-          'Client not initialized. API key might be missing or failed to load.',
-          undefined,
-          true
-        );
-      }
+    try {
+      await this._ensureApiKeysLoaded();
+    } catch (keyLoadError: any) {
+      return this.createError(
+        'AUTH',
+        `[AnthropicModelProvider] Failed to initialize client or load API credentials: ${keyLoadError.message || keyLoadError}`,
+        500,
+        false 
+      );
     }
+    
+    if (!this.anthropicClient) {
+        return this.createError('AUTH', '[AnthropicModelProvider] Client not initialized despite key loading attempt.', 500, false);
+    }
+
     if (!this.healthStatus.available) {
-        return this.createError('UNKNOWN', `Provider not available. ErrorRate: ${this.healthStatus.errorRate.toFixed(2)}, LastCheck: ${new Date(this.healthStatus.lastChecked).toISOString()}`, undefined, false);
+        return this.createError('UNKNOWN', `[AnthropicModelProvider] Provider not available. ErrorRate: ${this.healthStatus.errorRate.toFixed(2)}, LastCheck: ${new Date(this.healthStatus.lastChecked).toISOString()}`, undefined, false);
+    }
+
+    if (!this.canFulfill(request)) {
+      return this.createError('CAPABILITY', '[AnthropicModelProvider] Cannot fulfill the request with the required capabilities', 400, false);
     }
 
     const modelToUse = request.preferredModel || this.getDefaultModel();
-    const estimatedPromptTokens = Math.ceil((request.prompt.length / 4)); // Very rough estimate
-    const estimatedTotalTokens = estimatedPromptTokens + (request.maxTokens || (this.providerConfig?.models[modelToUse]?.contextSize || 1024) / 2); // Estimate based on maxTokens or half context
+    const estimatedPromptTokens = Math.ceil((request.prompt.length / 4));
+    const estimatedTotalTokens = estimatedPromptTokens + (request.maxTokens || (this.providerConfig?.models[modelToUse]?.contextSize || 1024) / 2);
 
-    if (!this.consumeTokens(estimatedTotalTokens)) { // Check against a rough estimate of total tokens for TPM
-        this.updateHealthMetrics(false, 0); // Failed due to rate limit
+    if (!this.consumeTokens(estimatedTotalTokens)) {
+        this.updateHealthMetrics(false, 0);
         return this.createError(
             'RATE_LIMIT',
-            'Estimated token consumption exceeds provider TPM/RPM limits.',
+            '[AnthropicModelProvider] Estimated token consumption exceeds provider TPM/RPM limits.',
             429,
             true
         );
@@ -208,10 +238,10 @@ export class AnthropicModelProvider extends BaseAIModelProvider implements IAIMo
             // Other Anthropic.APIError subtypes or generic APIError
             retryable = status >= 500; // Crude retry logic for server-side errors
         }
-        return this.createError(errorCode, `Anthropic API Error: ${error.message}`, status, retryable);
+        return this.createError(errorCode, `[AnthropicModelProvider] API Error: ${error.message}`, status, retryable);
       } else {
         // Non-Anthropic SDK errors (e.g., network issues before request, our internal errors)
-        return this.createError('UNKNOWN', `Error generating response from Anthropic: ${error.message || 'Unknown error'}`, undefined, true);
+        return this.createError('UNKNOWN', `[AnthropicModelProvider] Error generating response: ${error.message || 'Unknown internal error'}`, undefined, true);
       }
     }
   }
@@ -222,38 +252,96 @@ export class AnthropicModelProvider extends BaseAIModelProvider implements IAIMo
   }
 
   public getModelCapabilities(modelName: string): ModelCapabilities {
-    const modelConf = this.providerConfig?.models[modelName];
-    if (modelConf) {
-        return {
-            reasoning: modelConf.capabilities?.includes('reasoning_high') ? 5 : modelConf.capabilities?.includes('reasoning_medium') ? 3 : 1,
-            creativity: modelConf.capabilities?.includes('creativity_high') ? 5 : modelConf.capabilities?.includes('creativity_medium') ? 3 : 1,
-            coding: modelConf.capabilities?.includes('coding_proficient') ? 4 : modelConf.capabilities?.includes('coding_basic') ? 2 : 0,
-            retrieval: modelConf.capabilities?.includes('retrieval_augmented') || false,
-            functionCalling: modelConf.functionCalling || false,
-            contextSize: modelConf.contextSize || 0,
-            streamingSupport: modelConf.streamingSupport || false,
-        };
-    }
-    return {
-        reasoning: 0,
-        creativity: 0,
-        coding: 0,
-        retrieval: false,
-        functionCalling: false,
+    console.log(`[AnthropicModelProvider] getModelCapabilities called for model: ${modelName}`);
+    
+    // Base capabilities to ensure all fields are present, even if with default values
+    const capabilitiesBase: ModelCapabilities = {
+        reasoning: 0, 
+        creativity: 0, 
+        coding: 0, 
+        retrieval: false, 
+        functionCalling: false, // Corrected name
         contextSize: 0,
-        streamingSupport: false,
+        streamingSupport: false, // Corrected name
+        // Other fields like provider, model name, active status, costs, subjective scores (qualityScore)
+        // are NOT part of the ModelCapabilities interface itself based on common-types.
     };
+
+    switch (modelName) {
+        case 'claude-3-opus-20240229':
+            return {
+                ...capabilitiesBase,
+                contextSize: 200000,
+                functionCalling: true, // Corrected name
+                streamingSupport: true,
+                reasoning: 5, creativity: 4, coding: 4, retrieval: true, 
+            };
+
+        case 'claude-3-5-sonnet-20240620':
+             return {
+                ...capabilitiesBase,
+                contextSize: 200000,
+                functionCalling: true, // Corrected name
+                streamingSupport: true,
+                reasoning: 4, creativity: 4, coding: 3, retrieval: true, 
+            };
+
+        case 'claude-3-sonnet-20240229':
+            return {
+                ...capabilitiesBase,
+                contextSize: 200000,
+                functionCalling: true, // Corrected name
+                streamingSupport: true,
+                reasoning: 4, creativity: 3, coding: 3, retrieval: true, 
+            };
+
+        case 'claude-3-haiku-20240307':
+            return {
+                ...capabilitiesBase,
+                contextSize: 200000,
+                functionCalling: true, // Corrected name
+                streamingSupport: true,
+                reasoning: 3, creativity: 3, coding: 2, retrieval: false, 
+            };
+
+        case 'claude-2.1':
+        case 'claude-2.0':
+            return {
+                ...capabilitiesBase,
+                contextSize: 200000, 
+                functionCalling: false,
+                streamingSupport: true,
+                reasoning: 3, creativity: 2, coding: 1, retrieval: false, 
+            };
+
+        case 'claude-instant-1.2':
+            return {
+                ...capabilitiesBase,
+                contextSize: 100000,
+                functionCalling: false,
+                streamingSupport: true,
+                reasoning: 2, creativity: 2, coding: 1, retrieval: false, 
+            };
+            
+        default:
+            console.warn(`[AnthropicModelProvider] Unknown modelName: ${modelName} in getModelCapabilities. Returning default minimal capabilities.`);
+            return {
+                ...capabilitiesBase, // Returns the default minimal set defined above
+            }; 
+    }
   }
 
   public getProviderHealth(): ProviderHealthStatus {
-    return this.healthStatus;
+    return this.healthStatus; 
   }
 
   public getProviderLimits(): ProviderLimits {
-    return this.providerConfig?.rateLimits || { rpm: 10, tpm: 10000 };
+    // Rate limits can be at the provider level in ProviderConfig,
+    // or sometimes specified per model. For simplicity, using provider-level config first.
+    return this.providerConfig?.rateLimits || { rpm: 100, tpm: 40000 }; 
   }
 
-  public getDefaultModel(): string {
-    return this.providerConfig?.defaultModel || 'claude-3-5-haiku-latest';
+  protected getDefaultModel(): string {
+    return this.providerConfig?.defaultModel || 'claude-3-haiku-20240307'; 
   }
 } 

@@ -1,12 +1,10 @@
 import { ConfigurationService } from './ConfigurationService';
-import { DynamoDBProvider } from '../data/DynamoDBProvider'; // Corrected path
-import { IDatabaseProvider, ProviderConfiguration, validateConfiguration } from '@kinable/common-types';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { IDatabaseProvider, ProviderConfiguration } from '@kinable/common-types';
+import { GetCommand, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 
-// Environment variables for DynamoDB
-const REGION = process.env.AWS_REGION || 'us-east-2'; // Corrected typo
-const ENDPOINT_OVERRIDE = process.env.DYNAMODB_ENDPOINT_OVERRIDE; // Corrected typo; For local DynamoDB (e.g., http://localhost:8000)
+const REGION = process.env.AWS_REGION || 'us-east-2';
+const TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG;
+const CONFIG_ID = 'kinable-dev-config-v1'; // Example configId
 
 // Configuration for the test
 const TEST_TABLE_NAME = process.env.TEST_DYNAMODB_TABLE_PROVIDERCONFIG || 'KinableProviderConfig-Test';
@@ -14,7 +12,7 @@ const TEST_CONFIG_ID = 'INTEGRATION_TEST_CONFIG_V1';
 const TEST_SERVICE_REGION = REGION;
 
 // Mock DynamoDBProvider that stores items in memory instead of using real DynamoDB
-class MockDynamoDBProvider implements IDatabaseProvider {
+class MockDynamoDBProvider {
   private items: Map<string, any> = new Map();
   private awsClientRegion: string;
   

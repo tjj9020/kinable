@@ -27,7 +27,7 @@ const mockOpenAIGetProviderLimits = jest.fn().mockReturnValue({}); // Add defaul
 
 jest.mock('./OpenAIModelProvider', () => {
   return {
-    OpenAIModelProvider: jest.fn().mockImplementation(() => {
+    OpenAIModelProvider: jest.fn().mockImplementation((_secretId, _awsClientRegion) => {
       return {
         generateResponse: mockOpenAIGenerateResponse,
         canFulfill: mockOpenAICanFulfill,
@@ -435,7 +435,7 @@ describe('AIModelRouter', () => {
     // Configure the OpenAIModelProvider mock constructor to throw an error for this test
     MockedOpenAIModelProviderConstructor.mockClear();
     const initError = new Error('Failed to initialize OpenAI provider');
-    MockedOpenAIModelProviderConstructor.mockImplementation((secretId: string, awsClientRegion: string) => {
+    MockedOpenAIModelProviderConstructor.mockImplementation((_secretId, _awsClientRegion) => {
       throw initError;
     });
 
@@ -451,7 +451,7 @@ describe('AIModelRouter', () => {
     }
 
     // Reset mock implementation for subsequent tests to the default top-level mock behavior
-    MockedOpenAIModelProviderConstructor.mockImplementation((secretId: string, awsClientRegion: string) => {
+    MockedOpenAIModelProviderConstructor.mockImplementation((_secretId, _awsClientRegion) => {
       // The arguments secretId and awsClientRegion must be declared to match the original constructor's signature,
       // but they are not used in creating this specific mock instance's behavior.
       return {

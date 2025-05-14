@@ -18,6 +18,8 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 import * as dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
+import { CognitoIdentityServiceProvider } from '@aws-sdk/client-cognito-identity-provider';
+import axios from 'axios';
 
 // Load environment variables from .env.dev.remote if it exists
 dotenv.config({ path: '.env.dev.remote' });

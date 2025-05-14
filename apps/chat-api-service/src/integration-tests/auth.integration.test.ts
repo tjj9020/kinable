@@ -29,10 +29,12 @@ dotenv.config({ path: '.env.dev.remote' }); // Assuming Jest runs from package r
 
 // --- Configuration ---
 // These values need to be configured, preferably via environment variables.
-const COGNITO_USER_POOL_ID = process.env.TEST_COGNITO_USER_POOL_ID || '';
-const COGNITO_CLIENT_ID = process.env.TEST_COGNITO_CLIENT_ID || '';
-const API_ENDPOINT = process.env.TEST_API_ENDPOINT || ''; // e.g., https://xxxx.execute-api.us-east-2.amazonaws.com/dev1
-const AWS_REGION = process.env.TEST_AWS_REGION || 'us-east-2';
+const REGION = process.env.AWS_REGION || 'us-east-2';
+const USER_POOL_ID = process.env.TEST_COGNITO_USER_POOL_ID_INTEGRATION_TEST;
+const CLIENT_ID = process.env.TEST_COGNITO_CLIENT_ID_INTEGRATION_TEST;
+const _TEST_USER_USERNAME = process.env.TEST_AUTH_INTEGRATION_TEST_USERNAME; // Prefixed
+const _TEST_USER_PASSWORD = process.env.TEST_AUTH_INTEGRATION_TEST_PASSWORD; // Prefixed
+const API_ENDPOINT = process.env.TEST_API_ENDPOINT_INTEGRATION_TEST; // e.g., https://xxxx.execute-api.us-east-1.amazonaws.com/Prod
 const AWS_PROFILE = process.env.AWS_PROFILE;
 
 // Table names should match your deployed CloudFormation stack outputs
@@ -49,11 +51,11 @@ let testUsername: string;
 let testPasswordGenerated: string;
 
 const cognitoClient = new CognitoIdentityProviderClient({ 
-  region: AWS_REGION,
+  region: REGION,
   // Credentials will be picked up from environment or AWS_PROFILE if set
 });
 
-const dynamoDbConfig: any = { region: AWS_REGION };
+const dynamoDbConfig: any = { region: REGION };
 if (AWS_PROFILE) {
   // Note: AWS SDK v3 clients generally don't take credentials directly in constructor like v2.
   // It's better to ensure your environment (AWS_PROFILE env var, ~/.aws/credentials) is set up.
@@ -82,7 +84,7 @@ async function createTestCognitoUser(username: string, password: string, familyI
 
   try {
     await cognitoClient.send(new AdminCreateUserCommand({
-      UserPoolId: COGNITO_USER_POOL_ID,
+      UserPoolId: USER_POOL_ID,
       Username: username,
       TemporaryPassword: password, // Will be set permanently next
       UserAttributes: userAttributes,
@@ -91,7 +93,7 @@ async function createTestCognitoUser(username: string, password: string, familyI
     console.log(`[AuthTest] AdminCreateUserCommand successful for ${username}`);
 
     await cognitoClient.send(new AdminSetUserPasswordCommand({
-      UserPoolId: COGNITO_USER_POOL_ID,
+      UserPoolId: USER_POOL_ID,
       Username: username,
       Password: password,
       Permanent: true,
@@ -109,7 +111,7 @@ async function deleteTestCognitoUser(username: string) {
   if (!username) return;
   try {
     await cognitoClient.send(new AdminDeleteUserCommand({
-      UserPoolId: COGNITO_USER_POOL_ID,
+      UserPoolId: USER_POOL_ID,
       Username: username,
     }));
     console.log(`[AuthTest] Successfully deleted user ${username}`);
@@ -126,13 +128,13 @@ async function deleteTestCognitoUser(username: string) {
 // Helper function to authenticate and get JWT
 async function getJwtToken(username: string, password: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    if (!COGNITO_USER_POOL_ID || !COGNITO_CLIENT_ID) {
+    if (!USER_POOL_ID || !CLIENT_ID) {
       return reject(new Error('[AuthTest] Cognito User Pool ID or Client ID is not configured.'));
     }
 
     const poolData: ICognitoUserPoolData = {
-      UserPoolId: COGNITO_USER_POOL_ID,
-      ClientId: COGNITO_CLIENT_ID,
+      UserPoolId: USER_POOL_ID,
+      ClientId: CLIENT_ID,
     };
     const userPool = new CognitoUserPool(poolData);
 
@@ -168,13 +170,13 @@ describe('Chat API Service - Integration Tests', () => {
   // These need to be consistent for the user attributes and DynamoDB setup
   const suiteFamilyLogicalId = 'integTestFamAuth';
   const suiteProfileLogicalId = 'integTestProfAuth';
-  const suiteUserRegion = AWS_REGION; // or a specific test region like 'us-east-2'
+  const suiteUserRegion = REGION; // or a specific test region like 'us-east-2'
 
   const testFamilyIdActual = `FAMILY#${suiteUserRegion}#${suiteFamilyLogicalId}`;
   const testProfileIdActual = `PROFILE#${suiteUserRegion}#${suiteProfileLogicalId}`;
 
   beforeAll(async () => {
-    if (!API_ENDPOINT || !COGNITO_USER_POOL_ID || !COGNITO_CLIENT_ID || !DYNAMODB_TABLE_FAMILIES || !DYNAMODB_TABLE_PROFILES) {
+    if (!API_ENDPOINT || !USER_POOL_ID || !CLIENT_ID || !DYNAMODB_TABLE_FAMILIES || !DYNAMODB_TABLE_PROFILES) {
       throw new Error(
         '[AuthTest] One or more required environment variables for integration tests are not set. ' +
         'Please set: TEST_API_ENDPOINT, TEST_COGNITO_USER_POOL_ID, TEST_COGNITO_CLIENT_ID, TEST_AWS_REGION, ' +
@@ -276,14 +278,14 @@ describe('Chat API Service - Integration Tests', () => {
   describe('DynamoDB connectivity test', () => {
     test('should be able to access the tables', async () => {
       // This test uses its own specific IDs, not related to the beforeAll user.
-      const localTestFamilyId = `FAMILY#${AWS_REGION}#connTestFamClient`;
-      const localTestProfileId = `PROFILE#${AWS_REGION}#connTestProfClient`;
+      const localTestFamilyId = `FAMILY#${REGION}#connTestFamClient`;
+      const localTestProfileId = `PROFILE#${REGION}#connTestProfClient`;
       
       try {
         const familyData = {
           familyId: localTestFamilyId,
           tokenBalance: 1000,
-          primaryRegion: AWS_REGION, // Assuming FamilyData has primaryRegion
+          primaryRegion: REGION, // Assuming FamilyData has primaryRegion
           pauseStatusFamily: false
         };
         
@@ -291,7 +293,7 @@ describe('Chat API Service - Integration Tests', () => {
           profileId: localTestProfileId,
           familyId: localTestFamilyId,
           role: 'child',
-          userRegion: AWS_REGION, // Assuming ProfileData has userRegion
+          userRegion: REGION, // Assuming ProfileData has userRegion
           pauseStatusProfile: false
         };
         

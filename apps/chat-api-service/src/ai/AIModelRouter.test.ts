@@ -113,37 +113,42 @@ describe('AIModelRouter', () => {
       version: '1.0.0', updatedAt: Date.now(),
       providers: { 
         openai: { 
-          active: true, keyVersion: 1, secretId: 'mock-openai-secret-from-config', // UPDATED to be from config
+          active: true, keyVersion: 1, secretId: 'mock-openai-secret-from-config',
           defaultModel: 'gpt-3.5-turbo',
           endpoints: { default: { url: 'https://api.openai.com/v1', region: 'global', priority: 1, active: true } }, 
-          models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: ['general', 'chat'], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100, reasoning: 3, creativity: 3, coding: 2, retrieval: true, vision: false, toolUse: false, configurable: true, inputCost:0.002, outputCost:0.002, maxOutputTokens: 4096 } }, 
+          models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: ['general', 'chat'], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100, reasoning: 3, creativity: 3, coding: 2, retrieval: true, vision: false, toolUse: false, configurable: true, inputCost:0.002, outputCost:0.002, maxOutputTokens: 4096 } as any }, 
           rateLimits: { rpm: 100, tpm: 100000 }, 
           retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 }, 
           apiVersion: 'v1', 
           rolloutPercentage: 100 
         },
-        anthropic: { // ADDED Anthropic config
+        anthropic: { 
           active: true, keyVersion: 1, secretId: MOCK_ANTHROPIC_SECRET_ID,
           defaultModel: 'claude-3-haiku-20240307',
           endpoints: { default: { url: 'https://api.anthropic.com/v1', region: 'global', priority: 2, active: true } },
-          models: { 'claude-3-haiku-20240307': { tokenCost: 0.001, priority: 1, capabilities: ['general', 'chat'], contextSize: 100000, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100, reasoning: 3, creativity: 3, coding: 1, retrieval: false, vision: true, toolUse: true, configurable: true, inputCost:0.001, outputCost:0.001, maxOutputTokens: 4096 } },
+          models: { 'claude-3-haiku-20240307': { tokenCost: 0.001, priority: 1, capabilities: ['general', 'chat'], contextSize: 100000, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100, reasoning: 3, creativity: 3, coding: 1, retrieval: false, vision: true, toolUse: true, configurable: true, inputCost:0.001, outputCost:0.001, maxOutputTokens: 4096 } as any },
           rateLimits: { rpm: 100, tpm: 100000 },
           retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
           apiVersion: 'v1',
           rolloutPercentage: 100
         }
       },
-      routing: { rules: [], weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, defaultProvider: 'openai', defaultModel: 'gpt-3.5-turbo' },
+      routing: { 
+        rules: [], 
+        weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, 
+        providerPreferenceOrder: ['openai', 'anthropic'], // UPDATED
+        defaultModel: 'gpt-3.5-turbo' 
+      },
       featureFlags: {}
     } as ProviderConfiguration);
     
     mockGenericOpenAIProvider = createMockProvider('openai');
-    mockGenericAnthropicProvider = createMockProvider('anthropic'); // ADDED
+    mockGenericAnthropicProvider = createMockProvider('anthropic'); 
     
     router = new AIModelRouter(
       mockConfigServiceInstance, 
       MOCK_AWS_CLIENT_REGION,
-      { openai: mockGenericOpenAIProvider, anthropic: mockGenericAnthropicProvider } // Optionally pre-register anthropic too
+      { openai: mockGenericOpenAIProvider, anthropic: mockGenericAnthropicProvider } 
     );
   });
 
@@ -177,35 +182,24 @@ describe('AIModelRouter', () => {
     if (result.ok) expect(result.text).toBe('Response from openai');
   });
 
-  test('should use default provider if none specified', async () => {
+  test('should use first provider from preference order if none specified in request', async () => { // RENAMED and RE-PURPOSED
     const request: AIModelRequest = {
       prompt: 'Hello, world!',
       context: mockContext
     };
-    (mockConfigServiceInstance.getConfiguration as jest.Mock).mockClear(); 
-    (mockConfigServiceInstance.getConfiguration as jest.Mock).mockResolvedValueOnce({
-      version: '1.0.0',
-      updatedAt: Date.now(),
-      providers: {
-        openai: {
-          active: true, keyVersion: 1, secretId: 'mock-openai-secret-from-config',
-          endpoints: { default: { url: 'https://api.openai.com/v1', region: 'global', priority: 1, active: true } },
-          models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: [], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 } },
-          rateLimits: { rpm: 100, tpm: 100000 }, 
-          retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
-          apiVersion: 'v1', 
-          rolloutPercentage: 100,
-        }
-      },
-      routing: { rules: [], weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, defaultProvider: 'openai', defaultModel: 'gpt-3.5-turbo' },
-      featureFlags: {}
-    } as ProviderConfiguration);
+    
+    // Ensure the default beforeEach mockGetConfiguration is used, which has openai as first preference
+    mockIsRequestAllowed.mockClear().mockResolvedValue(true); // Ensure circuit is closed for openai
 
     const result = await router.routeRequest(request);
     
+    const expectedOpenAIKey = `openai#${MOCK_AWS_CLIENT_REGION}`;
+    expect(mockIsRequestAllowed).toHaveBeenCalledWith(expectedOpenAIKey);
     expect(mockConfigServiceInstance.getConfiguration).toHaveBeenCalledTimes(1);
     expect(mockGenericOpenAIProvider.generateResponse).toHaveBeenCalledWith(request);
+    expect(mockGenericAnthropicProvider.generateResponse).not.toHaveBeenCalled(); // Anthropic should not be called
     expect(result.ok).toBe(true);
+    if(result.ok) expect(result.text).toBe('Response from openai');
   });
 
   test('should return error if provider cannot fulfill request', async () => {
@@ -226,14 +220,14 @@ describe('AIModelRouter', () => {
         openai: {
           active: true, keyVersion: 1, secretId: 'mock-openai-secret-from-config',
           endpoints: { default: { url: 'https://api.openai.com/v1', region: 'global', priority: 1, active: true } },
-          models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: [], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 } },
+          models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: [], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 } as any },
           rateLimits: { rpm: 100, tpm: 100000 }, 
           retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
           apiVersion: 'v1', 
           rolloutPercentage: 100,
         }
       },
-      routing: { rules: [], weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, defaultProvider: 'openai', defaultModel: 'gpt-3.5-turbo' },
+      routing: { rules: [], weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, providerPreferenceOrder: ['openai'], defaultModel: 'gpt-3.5-turbo' },
       featureFlags: {}
     } as ProviderConfiguration);
 
@@ -266,14 +260,14 @@ describe('AIModelRouter', () => {
         openai: {
           active: true, keyVersion: 1, secretId: 'mock-openai-secret-from-config',
           endpoints: { default: { url: 'https://api.openai.com/v1', region: 'global', priority: 1, active: true } },
-          models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: [], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 } },
+          models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: [], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 } as any },
           rateLimits: { rpm: 100, tpm: 100000 }, 
           retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
           apiVersion: 'v1', 
           rolloutPercentage: 100,
         }
       },
-      routing: { rules: [], weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, defaultProvider: 'openai', defaultModel: 'gpt-3.5-turbo' },
+      routing: { rules: [], weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, providerPreferenceOrder: ['openai'], defaultModel: 'gpt-3.5-turbo' },
       featureFlags: {}
     } as ProviderConfiguration);
 
@@ -613,27 +607,27 @@ describe('AIModelRouter', () => {
   });
 
   // ADDED: Test for simple fallback when preferred provider circuit is open
-  test('should fallback to default provider if preferred provider circuit is open', async () => {
+  test('should fallback to provider from preference order if preferred provider circuit is open', async () => { // Name slightly updated for clarity
     router.clearProviders(); // Start clean, force dynamic initialization
 
-    // Configure mockGetConfiguration for this specific test
     const specificConfig: ProviderConfiguration = {
       version: '1.0.0', updatedAt: Date.now(),
       providers: {
         openai: {
           active: true, keyVersion: 1, secretId: 'mock-openai-secret-for-fallback-test',
           defaultModel: 'gpt-3.5-turbo',
-          endpoints: { default: { url: '', region: '', priority: 1, active: true } }, models: {},
+          endpoints: { default: { url: '', region: '', priority: 1, active: true } }, models: { 'gpt-3.5-turbo': {} as any },
           rateLimits: { rpm: 1, tpm: 1 }, retryConfig: { maxRetries: 1, initialDelayMs:1, maxDelayMs:1}, apiVersion:'', rolloutPercentage: 100
         } as any,
         anthropic: {
           active: true, keyVersion: 1, secretId: 'mock-anthropic-secret-for-fallback-test',
           defaultModel: 'claude-3-haiku-20240307',
-          endpoints: { default: { url: '', region: '', priority: 1, active: true } }, models: {},
+          endpoints: { default: { url: '', region: '', priority: 1, active: true } }, models: { 'claude-3-haiku-20240307': {} as any },
           rateLimits: { rpm: 1, tpm: 1 }, retryConfig: { maxRetries: 1, initialDelayMs:1, maxDelayMs:1}, apiVersion:'', rolloutPercentage: 100
         } as any
       },
-      routing: { rules: [], weights: { cost: 0.1, quality: 0.1, latency: 0.1, availability: 0.1 }, defaultProvider: 'anthropic', defaultModel: 'claude-3-haiku-20240307' },
+      // IMPORTANT: openai is preferred, then anthropic is in the preference order for fallback
+      routing: { rules: [], weights: { cost: 0.1, quality: 0.1, latency: 0.1, availability: 0.1 }, providerPreferenceOrder: ['openai', 'anthropic'], defaultModel: 'claude-3-haiku-20240307' }, 
       featureFlags: {}
     };
     mockGetConfiguration.mockResolvedValue(specificConfig);
@@ -647,10 +641,10 @@ describe('AIModelRouter', () => {
     const openaiHealthKey = `openai#${MOCK_AWS_CLIENT_REGION}`;
     const anthropicHealthKey = `anthropic#${MOCK_AWS_CLIENT_REGION}`;
 
-    // Simulate OpenAI circuit is OPEN, Anthropic is ALLOWED
-    mockIsRequestAllowed.mockImplementation(key => Promise.resolve(key !== openaiHealthKey));
+    // Simulate OpenAI (preferred) circuit is OPEN, Anthropic (from preference order) is ALLOWED
+    mockIsRequestAllowed.mockImplementation(key => Promise.resolve(key === anthropicHealthKey)); 
 
-    // Mock Anthropic's behavior (since it will be chosen as fallback)
+    MockedOpenAIModelProviderConstructor.mockClear();
     MockedAnthropicModelProviderConstructor.mockClear();
     mockAnthropicGenerateResponse.mockClear().mockResolvedValueOnce({
       ok: true, text: 'Response from fallback Anthropic', 
@@ -660,11 +654,15 @@ describe('AIModelRouter', () => {
 
     const result = await router.routeRequest(request);
 
-    expect(mockIsRequestAllowed).toHaveBeenCalledWith(openaiHealthKey); // Checked OpenAI first
-    expect(mockIsRequestAllowed).toHaveBeenCalledWith(anthropicHealthKey); // Then checked Anthropic
+    expect(mockGetConfiguration).toHaveBeenCalledTimes(1);
+    // Check that isRequestAllowed was called for both openai (preferred) and anthropic (fallback)
+    expect(mockIsRequestAllowed).toHaveBeenCalledWith(openaiHealthKey);
+    expect(mockIsRequestAllowed).toHaveBeenCalledWith(anthropicHealthKey);
     
-    expect(MockedOpenAIModelProviderConstructor).not.toHaveBeenCalled(); // OpenAI should not have been initialized
-    expect(MockedAnthropicModelProviderConstructor).toHaveBeenCalledTimes(1); // Anthropic should be initialized
+    // OpenAI (preferred) should not have been initialized because its circuit was open
+    expect(MockedOpenAIModelProviderConstructor).not.toHaveBeenCalled(); 
+    // Anthropic (fallback) should be initialized
+    expect(MockedAnthropicModelProviderConstructor).toHaveBeenCalledTimes(1); 
     expect(MockedAnthropicModelProviderConstructor).toHaveBeenCalledWith(
       'mock-anthropic-secret-for-fallback-test', 
       MOCK_AWS_CLIENT_REGION, 
@@ -672,6 +670,7 @@ describe('AIModelRouter', () => {
       'claude-3-haiku-20240307'
     );
     expect(mockAnthropicGenerateResponse).toHaveBeenCalledTimes(1);
+    expect(mockAnthropicGenerateResponse).toHaveBeenCalledWith(request);
 
     expect(result.ok).toBe(true);
     if (result.ok) {

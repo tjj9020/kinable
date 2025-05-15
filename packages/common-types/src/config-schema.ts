@@ -27,6 +27,7 @@ export interface EndpointConfig {
 export interface ProviderConfig {
   active: boolean;         // Whether this provider is currently enabled
   keyVersion: number;      // Current key version
+  secretId: string;        // AWS Secrets Manager secret ID for API keys
   endpoints: Record<string, EndpointConfig>; // Region-specific endpoints
   models: Record<string, ModelConfig>;      // Available models from this provider
   defaultModel?: string;    // Optional: Default model for this specific provider
@@ -72,7 +73,7 @@ export interface ProviderConfiguration {
       latency: number;     // Weight for latency (0-1)
       availability: number; // Weight for availability (0-1)
     };
-    defaultProvider: string; // Default provider if no rules match
+    providerPreferenceOrder: string[]; // Ordered list of provider names to try
     defaultModel: string;   // Default model if not specified
   };
   featureFlags: Record<string, boolean>; // Feature flags
@@ -97,9 +98,15 @@ export function validateConfiguration(config: ProviderConfiguration): string[] {
     errors.push(`Routing weights must sum to 1.0, got ${weightSum}`);
   }
   
-  // Check that defaultProvider exists
-  if (!config.providers[config.routing.defaultProvider]) {
-    errors.push(`Default provider "${config.routing.defaultProvider}" not found in providers`);
+  // Check that providerPreferenceOrder is not empty and all its providers exist
+  if (!config.routing.providerPreferenceOrder || config.routing.providerPreferenceOrder.length === 0) {
+    errors.push('providerPreferenceOrder cannot be empty.');
+  } else {
+    config.routing.providerPreferenceOrder.forEach(providerName => {
+      if (!config.providers[providerName]) {
+        errors.push(`Provider "${providerName}" in providerPreferenceOrder not found in providers list.`);
+      }
+    });
   }
   
   // Check that all provider models have required fields

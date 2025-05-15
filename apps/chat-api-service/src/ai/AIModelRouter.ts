@@ -61,7 +61,7 @@ export class AIModelRouter {
    */
   private async initializeOpenAI(appConfig: ProviderConfiguration): Promise<OpenAIModelProvider> {
     if (!this.providers.has('openai')) {
-      const openAIConfig = appConfig.providers.openai as any;
+      const openAIConfig = appConfig.providers.openai;
 
       if (!openAIConfig || !openAIConfig.secretId) {
         throw new Error("OpenAI provider configuration or secretId missing from ConfigurationService.");
@@ -90,7 +90,7 @@ export class AIModelRouter {
    */
   private async initializeAnthropic(appConfig: ProviderConfiguration): Promise<AnthropicModelProvider> {
     if (!this.providers.has('anthropic')) {
-      const anthropicConfig = appConfig.providers.anthropic as any;
+      const anthropicConfig = appConfig.providers.anthropic;
 
       if (!anthropicConfig || !anthropicConfig.secretId) {
         throw new Error("Anthropic provider configuration or secretId missing from ConfigurationService.");
@@ -118,50 +118,80 @@ export class AIModelRouter {
    */
   @tracer.captureMethod()
   public async routeRequest(request: AIModelRequest): Promise<AIModelResult> {
-    let chosenProviderName = ''; 
+    let chosenProviderName: string | null = null;
     const providerCallRegion = this.routerAwsRegion; 
-    let currentProviderHealthKey = ''; // To store the health key of the final chosen provider
+    let currentProviderHealthKey = ''; 
+    let triedProviders: string[] = [];
 
     try {
       const config = await this.configService.getConfiguration();
-      let primaryChoiceProviderName = request.preferredProvider || config.routing.defaultProvider;
-      chosenProviderName = primaryChoiceProviderName;
-      currentProviderHealthKey = `${chosenProviderName}#${providerCallRegion}`;
+      const preferredProviderFromRequest = request.preferredProvider;
 
-      if (!(await this.circuitBreakerManager.isRequestAllowed(currentProviderHealthKey))) {
-        console.warn(`[AIModelRouter] Circuit breaker OPEN for ${chosenProviderName} (${currentProviderHealthKey}).`);
-        
-        const fallbackProviderName = config.routing.defaultProvider === chosenProviderName 
-                                      ? (chosenProviderName === 'openai' && config.providers.anthropic?.active ? 'anthropic' : (chosenProviderName === 'anthropic' && config.providers.openai?.active ? 'openai' : null)) 
-                                      : (config.providers[config.routing.defaultProvider]?.active ? config.routing.defaultProvider : null);
-
-        if (fallbackProviderName && fallbackProviderName !== chosenProviderName) {
-          console.log(`[AIModelRouter] Attempting fallback to ${fallbackProviderName}`);
-          const fallbackHealthKey = `${fallbackProviderName}#${providerCallRegion}`;
-          if (await this.circuitBreakerManager.isRequestAllowed(fallbackHealthKey)) {
-            chosenProviderName = fallbackProviderName;
-            currentProviderHealthKey = fallbackHealthKey; // Update health key for the chosen fallback
-            console.log(`[AIModelRouter] Fallback to ${chosenProviderName} is allowed by its circuit breaker.`);
+      // Attempt preferred provider first if specified
+      if (preferredProviderFromRequest) {
+        triedProviders.push(preferredProviderFromRequest);
+        const providerConfig = config.providers[preferredProviderFromRequest];
+        if (providerConfig && providerConfig.active) {
+          currentProviderHealthKey = `${preferredProviderFromRequest}#${providerCallRegion}`;
+          if (await this.circuitBreakerManager.isRequestAllowed(currentProviderHealthKey)) {
+            chosenProviderName = preferredProviderFromRequest;
+            console.log(`[AIModelRouter] Preferred provider ${chosenProviderName} selected. Circuit breaker is closed.`);
           } else {
-            console.warn(`[AIModelRouter] Fallback provider ${fallbackProviderName} circuit breaker also OPEN.`);
-            return this.createError(
-              'TIMEOUT', 
-              `Primary provider ${primaryChoiceProviderName} and fallback provider ${fallbackProviderName} are temporarily unavailable (circuit open).`,
-              503, 
-              true 
-            );
+            console.warn(`[AIModelRouter] Circuit breaker OPEN for preferred provider ${preferredProviderFromRequest} (${currentProviderHealthKey}). Attempting fallback.`);
           }
         } else {
-          return this.createError(
-            'TIMEOUT', 
-            `Provider ${primaryChoiceProviderName} in region ${providerCallRegion} is unavailable (circuit open), and no suitable active fallback found.`,
-            503, 
-            true 
-          );
+          console.warn(`[AIModelRouter] Preferred provider ${preferredProviderFromRequest} is not configured or not active. Attempting fallback.`);
         }
       }
+
+      // If no provider chosen yet (either no preferred, or preferred failed), try preference order
+      if (!chosenProviderName) {
+        const preferenceOrder = config.routing.providerPreferenceOrder;
+        if (!preferenceOrder || preferenceOrder.length === 0) {
+          if (!preferredProviderFromRequest) { // Only error if no preferred was even specified
+            return this.createError(
+              'UNKNOWN',
+              'No provider preference order configured and no preferred provider in request.',
+              500,
+              false
+            );
+          }
+          // If preferredProviderFromRequest failed, and preferenceOrder is empty, we'll hit the final error below.
+        } else {
+          for (const providerNameFromOrder of preferenceOrder) {
+            if (providerNameFromOrder === preferredProviderFromRequest) {
+              // Already tried (and failed) this provider if it was the preferred one
+              continue; 
+            }
+            triedProviders.push(providerNameFromOrder);
+            const providerConfig = config.providers[providerNameFromOrder];
+            if (!providerConfig || !providerConfig.active) {
+              console.warn(`[AIModelRouter] Provider ${providerNameFromOrder} from preference order is not configured or not active. Skipping.`);
+              continue;
+            }
+
+            currentProviderHealthKey = `${providerNameFromOrder}#${providerCallRegion}`;
+            if (await this.circuitBreakerManager.isRequestAllowed(currentProviderHealthKey)) {
+              chosenProviderName = providerNameFromOrder;
+              console.log(`[AIModelRouter] Fallback provider ${chosenProviderName} selected from preference order. Circuit breaker is closed.`);
+              break; 
+            } else {
+              console.warn(`[AIModelRouter] Circuit breaker OPEN for ${providerNameFromOrder} (${currentProviderHealthKey}) from preference order. Trying next.`);
+            }
+          }
+        }
+      }
+
+      if (!chosenProviderName) {
+        return this.createError(
+          'TIMEOUT', 
+          `All attempted providers are temporarily unavailable (circuit open or inactive). Tried: ${[...new Set(triedProviders)].join(', ')}.`,
+          503, 
+          true 
+        );
+      }
       
-      // Dynamic provider initialization for the chosen (or fallback) provider
+      // Dynamic provider initialization for the chosen provider
       if (!this.providers.has(chosenProviderName)) {
         if (chosenProviderName === 'openai') {
           await this.initializeOpenAI(config);

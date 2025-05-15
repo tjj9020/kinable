@@ -160,38 +160,44 @@ async function setupDynamoDBTestData() {
     providers: {
       openai: {
         active: true,
-        keyVersion: 1, // Assuming key version 1, secret should be set up
+        keyVersion: 1,
+        secretId: "kinable-dev-us-east-2-openai-api-key",
         endpoints: {
           [AWS_REGION]: { url: "https://api.openai.com/v1", region: AWS_REGION, priority: 1, active: true }
         },
         models: {
-          "gpt-3.5-turbo": { // Using a cheaper model for E2E test
-            tokenCost: 0.001,
+          "gpt-3.5-turbo": {
+            inputCost: 0.001,
+            outputCost: 0.002,
             priority: 1,
             capabilities: ["basic", "function_calling"],
             contextSize: 4096,
             streamingSupport: true,
             functionCalling: true,
             active: true,
-            rolloutPercentage: 100,
+            rolloutPercentage: 100
           }
         },
-        rateLimits: { rpm: 100, tpm: 100000 }, // Generous for testing
+        rateLimits: { rpm: 100, tpm: 100000 },
         retryConfig: { maxRetries: 1, initialDelayMs: 100, maxDelayMs: 1000 },
         apiVersion: "v1",
         rolloutPercentage: 100,
+        defaultModel: "gpt-3.5-turbo" // Add defaultModel for the provider
       }
     },
     routing: {
       rules: [],
-      weights: { cost: 1, quality: 0, latency: 0, availability: 0 }, // Simple routing for test
-      defaultProvider: "openai",
+      weights: { cost: 1, quality: 0, latency: 0, availability: 0 },
+      providerPreferenceOrder: ["openai"],
       defaultModel: "gpt-3.5-turbo",
     },
     featureFlags: { enableStreaming: false, enableFunctionCalling: false },
   };
+  
+  // Directly store the configData object, not nested inside another object
+  // AWS SDK DocumentClient will automatically convert JS objects to DynamoDB format
   const configItem = {
-    configId: TEST_CHAT_CONFIG_ID, // This is the key for ProviderConfigTable
+    configId: TEST_CHAT_CONFIG_ID,
     configData: providerConfigData,
     lastUpdated: new Date().toISOString(),
   };
@@ -291,7 +297,10 @@ describe("Chat Router E2E Test", () => {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${testUserIdToken}`,
       },
-      body: JSON.stringify({ prompt: TEST_PROMPT }),
+      body: JSON.stringify({ 
+        prompt: TEST_PROMPT,
+        preferredModel: "gpt-3.5-turbo" // Explicitly specify the model name that we know exists
+      }),
     });
 
     console.log(`[E2E Test] Response status: ${response.status}`);

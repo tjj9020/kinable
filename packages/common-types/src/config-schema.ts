@@ -5,7 +5,8 @@
 
 // Model-specific configuration
 export interface ModelConfig {
-  tokenCost: number;       // Cost per 1K tokens
+  inputCost: number;       // Cost per 1K input tokens
+  outputCost: number;      // Cost per 1K output tokens
   priority: number;        // Priority for routing (lower is better)
   capabilities: string[];  // List of capabilities this model provides
   contextSize: number;     // Maximum token context size
@@ -136,8 +137,4 @@ export interface ModelSpecificConfig {
   active?: boolean; // Whether this specific model is active
   rolloutPercentage?: number; // For canary deployments (0-100)
   maxOutputTokens?: number;
-}
-
-export interface ProviderLimits {
-  // ... existing code ...
 } 

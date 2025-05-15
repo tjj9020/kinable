@@ -38,7 +38,7 @@ export abstract class BaseAIModelProvider {
    * @param modelName The name of the model.
    * @returns The capabilities of the model, or undefined if the model is not known/supported.
    */
-  public abstract getModelCapabilities(modelName: string): ModelCapabilities | undefined;
+  public abstract getModelCapabilities(modelName: string): ModelCapabilities;
   protected abstract _generateResponse(request: AIModelRequest): Promise<AIModelResult>;
   protected abstract standardizeError(error: any): AIModelError;
 

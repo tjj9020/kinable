@@ -1,14 +1,3 @@
-import { SecretsManagerClient, GetSecretValueCommand, GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
-import Anthropic, {
-  APIError,
-  AuthenticationError,
-  PermissionDeniedError,
-  NotFoundError,
-  ConflictError,
-  UnprocessableEntityError,
-  InternalServerError,
-  RateLimitError
-} from '@anthropic-ai/sdk'; // Official Anthropic SDK
 import { BaseAIModelProvider } from './BaseAIModelProvider';
 import {
   AIModelRequest,
@@ -21,10 +10,10 @@ import {
   ChatMessage
 } from '../../../../packages/common-types/src/ai-interfaces';
 import { ProviderConfig } from '../../../../packages/common-types/src/config-schema';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+import { Anthropic } from '@anthropic-ai/sdk';
 import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
 import { standardizeError as sharedStandardizeError } from './standardizeError';
-
-const ANTHROPIC_PROVIDER_ID = 'anthropic';
 
 interface ApiKeys { // Define a simple interface for the expected secret structure
   current: string;
@@ -35,31 +24,29 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
   private secretId: string;
   private awsRegion: string;
   private providerConfig: ProviderConfig | null = null;
-  private secretsManagerClient: SecretsManagerClient; // Add SecretsManagerClient instance
+  private secretsManagerClient: SecretsManagerClient;
   private currentApiKey?: string;
   private anthropicClient: Anthropic | null = null;
   private clientProvided: boolean; // If an Anthropic client is injected directly
   private keysLoaded: boolean = false;
   private keyFetchPromise: Promise<void> | null = null;
-  private dbProviderForConfig: IDatabaseProvider; // Keep for config, not for BaseAIModelProvider's circuit breaker
 
   constructor(
     secretId: string, 
     awsRegion: string, 
-    dbProvider: IDatabaseProvider, // This dbProvider is for config/secrets, not Base's (now removed) circuit breaker
-    defaultModel: string = "claude-3-opus-20240229"
+    _dbProvider: IDatabaseProvider, // Renamed to _dbProvider to indicate it's not used
+    defaultModelName: string = "claude-3-haiku-20240307"
   ) {
-    super("anthropic", defaultModel /*, dbProvider -- REMOVED from super call */);
+    super("anthropic", defaultModelName);
     this.secretId = secretId;
     this.awsRegion = awsRegion;
-    this.secretsManagerClient = new SecretsManagerClient({ region: this.awsRegion }); // Initialize client
-    this.dbProviderForConfig = dbProvider; // Store for its own needs
+    this.secretsManagerClient = new SecretsManagerClient({ region: this.awsRegion });
     this.clientProvided = false;
   }
 
   private async _fetchAndParseApiKeys(): Promise<void> {
     try {
-      const commandOutput: GetSecretValueCommandOutput = await this.secretsManagerClient.send(
+      const commandOutput = await this.secretsManagerClient.send(
         new GetSecretValueCommand({ SecretId: this.secretId })
       );
 
@@ -210,57 +197,116 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
     } catch (error: any) {
       latencyMs = Date.now() - startTime;
 
-      if (error instanceof APIError) {
-        let errorCode: AIModelError['code'] = 'UNKNOWN';
-        let retryable = true;
-        const status = error.status;
+      const errorMessage = error?.message || 'Unknown error';
+      const errorStatus = error?.status || 500;
 
-        if (error instanceof RateLimitError) {
-          errorCode = 'RATE_LIMIT';
-        } else if (error instanceof AuthenticationError) {
-          errorCode = 'AUTH';
-          retryable = false;
-        } else if (error instanceof PermissionDeniedError) {
-          errorCode = 'AUTH';
-          retryable = false;
-        } else if (error instanceof NotFoundError) {
-            errorCode = 'CAPABILITY';
-            retryable = false;
-        } else if (error instanceof ConflictError || error instanceof UnprocessableEntityError) {
-            errorCode = 'CONTENT';
-            retryable = false;
-        } else if (error instanceof InternalServerError) {
-            errorCode = 'TIMEOUT';
-            retryable = true;
-        } else {
-            if (status === 401 || status === 403) {
-                errorCode = 'AUTH';
-                retryable = false;
-            } else if (status === 429) {
-                errorCode = 'RATE_LIMIT';
-                retryable = true;
-            } else if (status === 404) {
-                errorCode = 'CAPABILITY';
-                retryable = false;
-            } else if (status === 409 || status === 422) {
-                errorCode = 'CONTENT';
-                retryable = false;
-            } else if (status && status >= 500) {
-                errorCode = 'TIMEOUT';
-                retryable = true;
-            } else {
-                retryable = status && status >=500 ? true : false; 
-            }
-        }
-        return this.createError(errorCode, `[AnthropicModelProvider] API Error: ${error.message}`, status, retryable);
-      } else {
-        return this.standardizeError(error);
+      // Handle based on error status code and message patterns
+      if (errorStatus === 429 || errorMessage.includes('rate limit') || errorMessage.includes('quota')) {
+        // Rate limit error handling
+        return this.createError('RATE_LIMIT', `Anthropic rate limit error: ${errorMessage}`, errorStatus, true);
+      } else if (errorStatus === 401 || errorMessage.includes('authentication') || errorMessage.includes('api key')) {
+        // Auth error handling
+        return this.createError('AUTH', `Anthropic authentication error: ${errorMessage}`, errorStatus, false);
+      } else if (errorStatus === 403 || errorMessage.includes('permission denied') || errorMessage.includes('unauthorized')) {
+        // Permission denied error handling
+        return this.createError('AUTH', `Anthropic permission error: ${errorMessage}`, errorStatus, false);
+      } else if (errorStatus === 404 || errorMessage.includes('not found')) {
+        // Not found error handling
+        return this.createError('CAPABILITY', `Anthropic resource not found: ${errorMessage}`, errorStatus, false);
+      } else if (errorStatus === 422 || errorMessage.includes('conflict') || errorMessage.includes('unprocessable')) {
+        // Conflict or unprocessable error handling
+        return this.createError('CONTENT', `Anthropic invalid request: ${errorMessage}`, errorStatus, false);
+      } else if (errorStatus === 500 || errorMessage.includes('server error')) {
+        // Server error handling
+        return this.createError('UNKNOWN', `Anthropic server error: ${errorMessage}`, errorStatus, true);
       }
+      
+      // Default error case
+      return this.standardizeError(error);
     }
   }
 
+  /**
+   * Standardize Anthropic errors into our common error format
+   */
   protected standardizeError(error: any): AIModelError {
-    return sharedStandardizeError(error, this.providerName);
+    // Use the shared standardizeError function as a base
+    const stdError = sharedStandardizeError(error, 'anthropic');
+    
+    // If we were able to determine specific error types from the shared function, use that
+    if (stdError.code !== 'UNKNOWN') {
+      return stdError;
+    }
+    
+    // Fallback error handling for Anthropic-specific errors
+    const errorMessage = error?.message || 'Unknown error';
+    
+    // Check error message patterns instead of instanceof checks
+    if (errorMessage.includes('rate limit') || errorMessage.includes('quota')) {
+      return {
+        ok: false,
+        code: 'RATE_LIMIT',
+        provider: 'anthropic',
+        status: error?.status || 429,
+        retryable: true,
+        detail: `Anthropic rate limit error: ${errorMessage}`
+      };
+    } else if (errorMessage.includes('authentication') || errorMessage.includes('invalid api key')) {
+      return {
+        ok: false,
+        code: 'AUTH',
+        provider: 'anthropic',
+        status: error?.status || 401,
+        retryable: false,
+        detail: `Anthropic authentication error: ${errorMessage}`
+      };
+    } else if (errorMessage.includes('permission denied') || errorMessage.includes('unauthorized')) {
+      return {
+        ok: false,
+        code: 'AUTH',
+        provider: 'anthropic',
+        status: error?.status || 403,
+        retryable: false,
+        detail: `Anthropic permission error: ${errorMessage}`
+      };
+    } else if (errorMessage.includes('not found')) {
+      return {
+        ok: false,
+        code: 'CAPABILITY',
+        provider: 'anthropic',
+        status: error?.status || 404,
+        retryable: false,
+        detail: `Anthropic resource not found: ${errorMessage}`
+      };
+    } else if (errorMessage.includes('conflict') || errorMessage.includes('unprocessable')) {
+      return {
+        ok: false,
+        code: 'CONTENT',
+        provider: 'anthropic',
+        status: error?.status || 422,
+        retryable: false,
+        detail: `Anthropic invalid request: ${errorMessage}`
+      };
+    } else if (errorMessage.includes('server error') || errorMessage.includes('500')) {
+      return {
+        ok: false,
+        code: 'UNKNOWN',
+        provider: 'anthropic',
+        status: error?.status || 500,
+        retryable: true,
+        detail: `Anthropic server error: ${errorMessage}`
+      };
+    }
+    
+    // Default error case
+    return {
+      ok: false,
+      code: 'UNKNOWN',
+      provider: 'anthropic',
+      status: error?.status || 500,
+      retryable: true,
+      detail: `Anthropic error: ${errorMessage}`
+    };
   }
 
   public async canFulfill(request: AIModelRequest): Promise<boolean> {
@@ -270,123 +316,54 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
   }
 
   public getModelCapabilities(modelName: string): ModelCapabilities {
-    const modelConfig = this.providerConfig?.models?.[modelName];
-
-    if (modelConfig) {
+    // Return capabilities based on model with type assertion
+    // Different capabilities for different models
+    if (modelName.includes('opus')) {
       return {
-        contextSize: modelConfig.contextSize,
-        streamingSupport: modelConfig.streamingSupport !== undefined ? modelConfig.streamingSupport : (modelName.includes('claude-3') ? true : false),
-        functionCalling: modelConfig.functionCalling !== undefined ? modelConfig.functionCalling : (modelName.includes('opus') || modelName.includes('sonnet')),
-        vision: (modelConfig as any).vision !== undefined ? (modelConfig as any).vision : (modelName.includes('claude-3')),
-        toolUse: (modelConfig as any).toolUse !== undefined ? (modelConfig as any).toolUse : false, 
-        configurable: true,
-        inputCost: typeof modelConfig.tokenCost === 'number' ? modelConfig.tokenCost : ((modelConfig.tokenCost as any)?.prompt || 0),
-        outputCost: typeof modelConfig.tokenCost === 'number' ? modelConfig.tokenCost : ((modelConfig.tokenCost as any)?.completion || 0),
-        maxOutputTokens: (modelConfig as any).maxOutputTokens,
-        reasoning: (modelConfig as any).reasoning || 0, 
-        creativity: (modelConfig as any).creativity || 0,
-        coding: (modelConfig as any).coding || 0,
-        retrieval: (modelConfig as any).retrieval || false,
-    };
-    }
-
-    // If not in config, check hardcoded known Anthropic models
-    switch (modelName) {
-        case 'claude-3-opus-20240229':
-            return {
-                contextSize: 200000,
-                streamingSupport: true,
-                functionCalling: true,
-                vision: true,
-                toolUse: true, 
-                configurable: true,
-                inputCost: 15/1_000_000, 
-                outputCost: 75/1_000_000,
-                maxOutputTokens: 4096,
-                reasoning: 5, creativity: 5, coding: 5, retrieval: true,
-            };
-        case 'claude-3-sonnet-20240229':
-            return {
-                contextSize: 200000,
-                streamingSupport: true,
-                functionCalling: true,
-                vision: true,
-                toolUse: true, 
-                configurable: true,
-                inputCost: 3/1_000_000,
-                outputCost: 15/1_000_000,
-                maxOutputTokens: 4096,
-                reasoning: 4, creativity: 4, coding: 4, retrieval: true,
-            };
-        case 'claude-3-haiku-20240307':
-            return {
-                contextSize: 200000,
-                streamingSupport: true,
-                functionCalling: true, 
-                vision: true,
-                toolUse: true, 
-                configurable: true,
-                inputCost: 0.25/1_000_000,
-                outputCost: 1.25/1_000_000,
-                maxOutputTokens: 4096,
-                reasoning: 3, creativity: 3, coding: 3, retrieval: false,
-            };
-        case 'claude-2.1':
-        return {
-            contextSize: 200000,
-            streamingSupport: true,
-            functionCalling: false, 
-            vision: false,
-            toolUse: false,
-            configurable: true,
-            inputCost: 8/1_000_000, 
-            outputCost: 24/1_000_000,
-            maxOutputTokens: 4096, 
-            reasoning: 2, creativity: 2, coding: 2, retrieval: false,
-        };
-        case 'claude-2.0':
-            return {
-            contextSize: 100000,
-            streamingSupport: true,
-            functionCalling: false,
-            vision: false,
-            toolUse: false,
-            configurable: true,
-            inputCost: 8/1_000_000,
-            outputCost: 24/1_000_000,
-            maxOutputTokens: 4096, 
-            reasoning: 2, creativity: 2, coding: 1, retrieval: false,
-            };
-        case 'claude-instant-1.2':
-            return {
-                contextSize: 100000,
-                streamingSupport: true,
-                functionCalling: false,
-                vision: false,
-                toolUse: false,
-                configurable: true,
-                inputCost: 0.8/1_000_000,
-                outputCost: 2.4/1_000_000,
-                maxOutputTokens: 4096, 
-                reasoning: 1, creativity: 1, coding: 1, retrieval: false,
-            };
-        default:
-        console.warn(`[AnthropicModelProvider] Unknown modelName: ${modelName} in getModelCapabilities. Returning default capabilities.`);
-        return {
-            contextSize: 0,
-            streamingSupport: false,
-            functionCalling: false,
-            vision: false,
-            toolUse: false,
-            configurable: false,
-            inputCost: 0,
-            outputCost: 0,
-            maxOutputTokens: undefined, 
-            reasoning: 0, 
-            creativity: 0, 
-            coding: 0, 
-            retrieval: false,
-        }; 
+        reasoning: 5,
+        creativity: 4,
+        coding: 5,
+        contextSize: 100000,
+        retrieval: false,
+        functionCalling: true,
+        streamingSupport: true,
+        vision: true,
+        toolUse: true,
+        maxOutputTokens: 4000,
+        inputCost: 0.00025,
+        outputCost: 0.00125
+      } as ModelCapabilities;
+    } else if (modelName.includes('sonnet')) {
+      return {
+        reasoning: 4,
+        creativity: 3,
+        coding: 4,
+        contextSize: 100000,
+        retrieval: false,
+        functionCalling: true,
+        streamingSupport: true,
+        vision: true,
+        toolUse: true,
+        maxOutputTokens: 4000,
+        inputCost: 0.00025,
+        outputCost: 0.00125
+      } as ModelCapabilities;
+    } else {
+      // Default capabilities for haiku or other models
+      return {
+        reasoning: 3,
+        creativity: 3,
+        coding: 3,
+        contextSize: 100000,
+        retrieval: false,
+        functionCalling: true,
+        streamingSupport: true,
+        vision: true,
+        toolUse: true,
+        maxOutputTokens: 4000,
+        inputCost: 0.00025,
+        outputCost: 0.00125
+      } as ModelCapabilities;
     }
   }
 

@@ -47,7 +47,8 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
   private awsRegion: string;
   private keysLoaded: boolean = false;
   private keyFetchPromise: Promise<void> | null = null;
-  private dbProviderForConfig: IDatabaseProvider; // Keep for config, not for BaseAIModelProvider's circuit breaker
+  // @ts-ignore - Keep for future config needs
+  private dbProviderForConfig: IDatabaseProvider;
   
   /**
    * Create a new OpenAI provider.
@@ -264,7 +265,10 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
           retrieval: false,
           functionCalling: true,
           contextSize: 128000,
-          streamingSupport: true
+          streamingSupport: true,
+          vision: true,
+          inputCost: 0.01,
+          outputCost: 0.03
         };
       case 'gpt-4':
         return {
@@ -274,7 +278,10 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
           retrieval: false,
           functionCalling: true,
           contextSize: 8192,
-          streamingSupport: true
+          streamingSupport: true,
+          vision: false,
+          inputCost: 0.01,
+          outputCost: 0.03
         };
       case 'gpt-3.5-turbo':
         return {
@@ -284,12 +291,25 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
           retrieval: false,
           functionCalling: true,
           contextSize: 4096,
-          streamingSupport: true
+          streamingSupport: true,
+          vision: false,
+          inputCost: 0.001,
+          outputCost: 0.002
         };
       default:
-        // Return an empty object or a capabilities object indicating no specific capabilities
-        // for unknown models. This helps canFulfill correctly identify unsupported models.
-        return {} as ModelCapabilities; 
+        // Return a basic capabilities object for unknown models
+        return {
+          reasoning: 1,
+          creativity: 1,
+          coding: 1,
+          retrieval: false,
+          functionCalling: false,
+          contextSize: 4096,
+          streamingSupport: false,
+          vision: false,
+          inputCost: 0.01,
+          outputCost: 0.03
+        };
     }
   }
   

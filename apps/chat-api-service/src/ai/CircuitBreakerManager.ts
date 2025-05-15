@@ -1,5 +1,12 @@
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from "@aws-sdk/lib-dynamodb";
-import { ProviderHealthState } from "@kinable/common-types";
+import { ProviderHealthState } from "../../../../packages/common-types/src/ai-interfaces";
+
+// Extended interface to include properties used in the code but not in the type definition
+interface ExtendedProviderHealthState extends Omit<ProviderHealthState, 'totalLatencyMs'> {
+  totalLatencyMs: number | undefined; // Allow undefined for compatibility with original code
+  lastLatencyMs?: number;
+  avgLatencyMs?: number;
+}
 
 // Default configuration for circuit breaker
 const DEFAULT_FAILURE_THRESHOLD = 3; // Open circuit after 3 consecutive failures
@@ -37,7 +44,7 @@ export class CircuitBreakerManager {
      * @param providerRegion The composite key (e.g., "OpenAI#us-east-1").
      * @returns The current ProviderHealthState or null if not found.
      */
-    public async getProviderHealth(providerRegion: string): Promise<ProviderHealthState | null> {
+    public async getProviderHealth(providerRegion: string): Promise<ExtendedProviderHealthState | null> {
         const params = {
             TableName: this.tableName,
             Key: {
@@ -47,7 +54,7 @@ export class CircuitBreakerManager {
 
         try {
             const { Item } = await this.ddbDocClient.send(new GetCommand(params));
-            return Item ? (Item as ProviderHealthState) : null;
+            return Item ? (Item as ExtendedProviderHealthState) : null;
         } catch (error) {
             console.error(`[CircuitBreakerManager] Error getting provider health for ${providerRegion}:`, error);
             // In case of a DynamoDB error, it's safer to assume the provider might be unhealthy
@@ -62,7 +69,7 @@ export class CircuitBreakerManager {
      * @param providerRegion The composite key (e.g., "OpenAI#us-east-1").
      * @returns A new ProviderHealthState object in CLOSED state.
      */
-    private getDefaultHealthState(providerRegion: string): ProviderHealthState {
+    private getDefaultHealthState(providerRegion: string): ExtendedProviderHealthState {
         const now = Date.now();
         return {
             providerRegion,
@@ -84,7 +91,7 @@ export class CircuitBreakerManager {
      * Updates the health state of a provider in DynamoDB.
      * @param healthState The new health state of the provider.
      */
-    public async updateProviderHealth(healthState: ProviderHealthState): Promise<void> {
+    public async updateProviderHealth(healthState: ExtendedProviderHealthState): Promise<void> {
         // Ensure TTL is updated correctly if not already set by the caller for this specific update
         const now = Date.now();
         const newTtl = Math.floor(now / 1000) + this.recordTtlSeconds;
@@ -206,6 +213,13 @@ export class CircuitBreakerManager {
         healthState.totalFailures += 1;
         healthState.lastFailureTimestamp = now;
         healthState.lastStateChangeTimestamp = now; // Always update for activity tracking
+
+        // If durationMs is provided, update latency metrics
+        if (durationMs !== undefined) {
+            healthState.lastLatencyMs = durationMs;
+            // We still track latency for failed requests separately from success latency
+            healthState.totalLatencyMs = (healthState.totalLatencyMs || 0) + durationMs;
+        }
 
         switch (healthState.status) {
             case 'HALF_OPEN':

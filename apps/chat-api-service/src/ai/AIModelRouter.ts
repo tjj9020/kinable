@@ -5,10 +5,10 @@ import {
   AIModelError
 } from '../../../../packages/common-types/src/ai-interfaces';
 import { ProviderConfiguration } from '../../../../packages/common-types/src/config-schema';
+import { CircuitBreakerManager } from './CircuitBreakerManager';
 import { ConfigurationService } from './ConfigurationService';
 import { OpenAIModelProvider } from './OpenAIModelProvider';
 import { AnthropicModelProvider } from './AnthropicModelProvider';
-import { CircuitBreakerManager } from './CircuitBreakerManager';
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { Tracer } from '@aws-lambda-powertools/tracer';
@@ -63,8 +63,8 @@ export class AIModelRouter {
     if (!this.providers.has('openai')) {
       const openAIConfig = appConfig.providers.openai;
 
-      if (!openAIConfig || !openAIConfig.secretId) {
-        throw new Error("OpenAI provider configuration or secretId missing from ConfigurationService.");
+      if (!openAIConfig) {
+        throw new Error("OpenAI provider configuration missing from ConfigurationService.");
       }
 
       const dbProvider = this.configService.getDBProvider();
@@ -72,9 +72,15 @@ export class AIModelRouter {
         throw new Error("Database provider not available from ConfigurationService in AIModelRouter");
       }
       
-      const defaultOpenAIModel = openAIConfig.defaultModel || "gpt-3.5-turbo";
+      // Use type assertion to access properties
+      const secretId = (openAIConfig as any).secretId;
+      if (!secretId) {
+        throw new Error("OpenAI provider secretId missing from configuration");
+      }
+      
+      const defaultOpenAIModel = openAIConfig.defaultModel || appConfig.routing.defaultModel || "gpt-3.5-turbo";
       const provider = new OpenAIModelProvider(
-        openAIConfig.secretId, 
+        secretId,
         this.routerAwsRegion,
         dbProvider, 
         defaultOpenAIModel
@@ -92,8 +98,8 @@ export class AIModelRouter {
     if (!this.providers.has('anthropic')) {
       const anthropicConfig = appConfig.providers.anthropic;
 
-      if (!anthropicConfig || !anthropicConfig.secretId) {
-        throw new Error("Anthropic provider configuration or secretId missing from ConfigurationService.");
+      if (!anthropicConfig) {
+        throw new Error("Anthropic provider configuration missing from ConfigurationService.");
       }
 
       const dbProvider = this.configService.getDBProvider();
@@ -101,9 +107,15 @@ export class AIModelRouter {
         throw new Error("Database provider not available from ConfigurationService in AIModelRouter");
       }
       
-      const defaultAnthropicModel = anthropicConfig.defaultModel || "claude-3-haiku-20240307"; // Example default
+      // Use type assertion to access properties
+      const secretId = (anthropicConfig as any).secretId;
+      if (!secretId) {
+        throw new Error("Anthropic provider secretId missing from configuration");
+      }
+      
+      const defaultAnthropicModel = anthropicConfig.defaultModel || appConfig.routing.defaultModel || "claude-3-haiku-20240307";
       const provider = new AnthropicModelProvider(
-        anthropicConfig.secretId,
+        secretId,
         this.routerAwsRegion,
         dbProvider,
         defaultAnthropicModel
@@ -117,149 +129,192 @@ export class AIModelRouter {
    * Route a request to the appropriate provider
    */
   @tracer.captureMethod()
-  public async routeRequest(request: AIModelRequest): Promise<AIModelResult> {
-    let chosenProviderName: string | null = null;
-    const providerCallRegion = this.routerAwsRegion; 
-    let currentProviderHealthKey = ''; 
-    let triedProviders: string[] = [];
+  public async routeRequest(request: AIModelRequest & { estimatedInputTokens?: number; estimatedOutputTokens?: number }): Promise<AIModelResult> {
+    const providerCallRegion = this.routerAwsRegion;
+    let triedProvidersInfo: Array<{ name: string; reason?: string }> = [];
 
     try {
       const config = await this.configService.getConfiguration();
-      const preferredProviderFromRequest = request.preferredProvider;
+      const { 
+        estimatedInputTokens,
+        estimatedOutputTokens,
+        maxTokens: requestMaxTokens,
+        prompt
+      } = request;
 
-      // Attempt preferred provider first if specified
-      if (preferredProviderFromRequest) {
-        triedProviders.push(preferredProviderFromRequest);
-        const providerConfig = config.providers[preferredProviderFromRequest];
-        if (providerConfig && providerConfig.active) {
-          currentProviderHealthKey = `${preferredProviderFromRequest}#${providerCallRegion}`;
-          if (await this.circuitBreakerManager.isRequestAllowed(currentProviderHealthKey)) {
-            chosenProviderName = preferredProviderFromRequest;
-            console.log(`[AIModelRouter] Preferred provider ${chosenProviderName} selected. Circuit breaker is closed.`);
+      let candidateProviders: Array<{ 
+        name: string; 
+        provider: IAIModelProvider; // Added for direct access post-initialization
+        modelName: string; 
+        estimatedCost: number; 
+        score: number; 
+        healthKey: string;
+      }> = [];
+
+      // Use providerPreferenceOrder from config or fallback to a default if not available
+      const providerOrder = (config.routing as any).providerPreferenceOrder || 
+                          ['openai', 'anthropic'];  // Default fallback
+
+      const initialProvidersToConsider = request.preferredProvider
+        ? [{ name: request.preferredProvider, reason: 'request_preferred' }]
+        : providerOrder.map((name: string) => ({ name, reason: 'preference_order' }));
+
+      for (const { name: providerName } of initialProvidersToConsider) {
+        if (triedProvidersInfo.some(p => p.name === providerName)) continue; // Already evaluated or tried
+
+        const providerConfig = config.providers[providerName];
+        if (!providerConfig || !providerConfig.active) {
+          triedProvidersInfo.push({ name: providerName, reason: 'inactive_or_not_configured' });
+          console.warn(`[AIModelRouter] Provider ${providerName} is not configured or not active. Skipping.`);
+          continue;
+        }
+
+        const healthKey = `${providerName}#${providerCallRegion}`;
+        if (!(await this.circuitBreakerManager.isRequestAllowed(healthKey))) {
+          triedProvidersInfo.push({ name: providerName, reason: 'circuit_open' });
+          console.warn(`[AIModelRouter] Circuit breaker OPEN for ${providerName} (${healthKey}). Skipping.`);
+          continue;
+        }
+
+        // Ensure provider is initialized for capability checks and model info
+        let providerInstance = this.providers.get(providerName);
+        if (!providerInstance) {
+          try {
+            if (providerName === 'openai') providerInstance = await this.initializeOpenAI(config);
+            else if (providerName === 'anthropic') providerInstance = await this.initializeAnthropic(config);
+            else throw new Error(`Provider ${providerName} not configured for dynamic initialization.`);
+          } catch (initError: any) {
+            triedProvidersInfo.push({ name: providerName, reason: `initialization_failed: ${initError.message}` });
+            console.error(`[AIModelRouter] Failed to initialize provider ${providerName}: ${initError.message}`);
+            await this.circuitBreakerManager.recordFailure(healthKey); // Record failure if init fails
+            continue;
+          }
+        }
+        if (!providerInstance) { // Should not happen if init succeeded
+            triedProvidersInfo.push({ name: providerName, reason: 'initialization_failed_no_instance' });
+            console.error(`[AIModelRouter] Provider ${providerName} instance not available after init attempt.`);
+            await this.circuitBreakerManager.recordFailure(healthKey);
+            continue;
+        }
+
+        if (!(await providerInstance.canFulfill(request))) {
+          triedProvidersInfo.push({ name: providerName, reason: 'cannot_fulfill' });
+          console.warn(`[AIModelRouter] Provider ${providerName} cannot fulfill request capabilities. Skipping.`);
+          continue;
+        }
+
+        const modelName = request.preferredModel && providerConfig.models[request.preferredModel]
+          ? request.preferredModel
+          : providerConfig.defaultModel;
+        
+        if (!modelName) {
+            triedProvidersInfo.push({ name: providerName, reason: 'no_model_available' });
+            console.warn(`[AIModelRouter] No suitable model found for provider ${providerName}. Skipping.`);
+            continue;
+        }
+        const modelConfig = providerConfig.models[modelName];
+        if (!modelConfig || !modelConfig.active) {
+          triedProvidersInfo.push({ name: providerName, reason: `model_${modelName}_inactive_or_not_configured` });
+          console.warn(`[AIModelRouter] Model ${modelName} for provider ${providerName} is not configured or not active. Skipping.`);
+          continue;
+        }
+
+        // Cost Calculation (per 1K tokens)
+        const estInput = estimatedInputTokens ?? Math.ceil(prompt.length / 4); // Simple heuristic
+        const estOutput = estimatedOutputTokens ?? requestMaxTokens ?? 256; // Default to 256 if no other estimate
+        
+        // Use type assertions to access inputCost and outputCost
+        const inputCost = (modelConfig as any).inputCost || 0.001; // Default fallback value
+        const outputCost = (modelConfig as any).outputCost || 0.002; // Default fallback value
+        
+        const cost = ((estInput / 1000) * inputCost) + ((estOutput / 1000) * outputCost);
+
+        // Scoring (simplified for now)
+        // Lower cost is better, so invert for score contribution if not 0.
+        const costScoreFactor = cost > 0 ? 1 / cost : 1; // Avoid division by zero, higher is better for score part
+        const availabilityScoreFactor = 1; // Already passed circuit breaker
+        // TODO: Incorporate real latency and quality scores later
+        const latencyScoreFactor = 1; 
+        const qualityScoreFactor = 1; 
+
+        const score =
+          (costScoreFactor * config.routing.weights.cost) +
+          (availabilityScoreFactor * config.routing.weights.availability) +
+          (latencyScoreFactor * config.routing.weights.latency) +
+          (qualityScoreFactor * config.routing.weights.quality);
+
+        candidateProviders.push({
+          name: providerName,
+          provider: providerInstance, // Store initialized instance
+          modelName,
+          estimatedCost: cost,
+          score,
+          healthKey
+        });
+        triedProvidersInfo.push({ name: providerName, reason: 'added_to_candidates' });
+      }
+
+      if (candidateProviders.length === 0) {
+        const reasons = triedProvidersInfo.map(p => `${p.name}(${p.reason || 'unknown'})`).join(', ');
+        return this.createError(
+          'TIMEOUT', // Or 'CAPABILITY' if all were capability issues
+          `No suitable active provider available after filtering. Attempted/Considered: ${reasons || 'None'}`,
+          503,
+          true
+        );
+      }
+
+      // Sort candidates by score (descending - higher score is better)
+      candidateProviders.sort((a, b) => b.score - a.score);
+      
+      // Attempt providers in order of score
+      for (const candidate of candidateProviders) {
+        console.log(`[AIModelRouter] Attempting provider ${candidate.name} (Model: ${candidate.modelName}, Score: ${candidate.score.toFixed(4)}, Est. Cost: ${candidate.estimatedCost.toFixed(6)})`);
+        const providerToUse = candidate.provider; // Use the stored initialized instance
+        const currentProviderHealthKey = candidate.healthKey;
+
+        // Request might need model explicitly set if not just using provider default
+        const finalRequest = { ...request, preferredModel: candidate.modelName };
+
+        const startTime = Date.now();
+        let result: AIModelResult;
+        let durationMs: number;
+
+        try {
+          result = await providerToUse.generateResponse(finalRequest);
+          durationMs = Date.now() - startTime;
+          if (result.ok) {
+            await this.circuitBreakerManager.recordSuccess(currentProviderHealthKey, durationMs);
+            console.log(`[AIModelRouter] Successfully routed to ${candidate.name} with model ${candidate.modelName}.`);
+            return result; // Success, return immediately
           } else {
-            console.warn(`[AIModelRouter] Circuit breaker OPEN for preferred provider ${preferredProviderFromRequest} (${currentProviderHealthKey}). Attempting fallback.`);
-          }
-        } else {
-          console.warn(`[AIModelRouter] Preferred provider ${preferredProviderFromRequest} is not configured or not active. Attempting fallback.`);
-        }
-      }
-
-      // If no provider chosen yet (either no preferred, or preferred failed), try preference order
-      if (!chosenProviderName) {
-        const preferenceOrder = config.routing.providerPreferenceOrder;
-        if (!preferenceOrder || preferenceOrder.length === 0) {
-          if (!preferredProviderFromRequest) { // Only error if no preferred was even specified
-            return this.createError(
-              'UNKNOWN',
-              'No provider preference order configured and no preferred provider in request.',
-              500,
-              false
-            );
-          }
-          // If preferredProviderFromRequest failed, and preferenceOrder is empty, we'll hit the final error below.
-        } else {
-          for (const providerNameFromOrder of preferenceOrder) {
-            if (providerNameFromOrder === preferredProviderFromRequest) {
-              // Already tried (and failed) this provider if it was the preferred one
-              continue; 
+            if (result.retryable || result.code === 'UNKNOWN' || result.code === 'TIMEOUT') {
+              await this.circuitBreakerManager.recordFailure(currentProviderHealthKey, durationMs);
             }
-            triedProviders.push(providerNameFromOrder);
-            const providerConfig = config.providers[providerNameFromOrder];
-            if (!providerConfig || !providerConfig.active) {
-              console.warn(`[AIModelRouter] Provider ${providerNameFromOrder} from preference order is not configured or not active. Skipping.`);
-              continue;
-            }
-
-            currentProviderHealthKey = `${providerNameFromOrder}#${providerCallRegion}`;
-            if (await this.circuitBreakerManager.isRequestAllowed(currentProviderHealthKey)) {
-              chosenProviderName = providerNameFromOrder;
-              console.log(`[AIModelRouter] Fallback provider ${chosenProviderName} selected from preference order. Circuit breaker is closed.`);
-              break; 
-            } else {
-              console.warn(`[AIModelRouter] Circuit breaker OPEN for ${providerNameFromOrder} (${currentProviderHealthKey}) from preference order. Trying next.`);
-            }
+            console.warn(`[AIModelRouter] Provider ${candidate.name} (Model: ${candidate.modelName}) returned error: ${result.detail}. Code: ${result.code}`);
+            // If not retryable by this provider, or a non-retryable error, we move to the next candidate
           }
+        } catch (error: any) {
+          durationMs = Date.now() - startTime;
+          console.error(`[AIModelRouter] Unhandled error during provider.generateResponse for ${candidate.name}#${providerCallRegion} (Model: ${candidate.modelName}):`, error);
+          await this.circuitBreakerManager.recordFailure(currentProviderHealthKey, durationMs);
+          // Continue to next candidate if available
         }
-      }
-
-      if (!chosenProviderName) {
-        return this.createError(
-          'TIMEOUT', 
-          `All attempted providers are temporarily unavailable (circuit open or inactive). Tried: ${[...new Set(triedProviders)].join(', ')}.`,
-          503, 
-          true 
-        );
+        // If we reach here, the attempt failed, try next candidate from sorted list
       }
       
-      // Dynamic provider initialization for the chosen provider
-      if (!this.providers.has(chosenProviderName)) {
-        if (chosenProviderName === 'openai') {
-          await this.initializeOpenAI(config);
-        } else if (chosenProviderName === 'anthropic') {
-          await this.initializeAnthropic(config);
-        } else {
-          await this.circuitBreakerManager.recordFailure(currentProviderHealthKey); 
-          return this.createError(
-            'UNKNOWN',
-            `Provider ${chosenProviderName} not configured for dynamic initialization.`,
-            500,
-            false
-          );
-        }
-      }
-      
-      const provider = this.providers.get(chosenProviderName);
-      
-      if (!provider) {
-        await this.circuitBreakerManager.recordFailure(currentProviderHealthKey);
-        return this.createError(
-          'UNKNOWN',
-          `Provider ${chosenProviderName} not available after initialization attempt.`,
-          500,
-          false
-        );
-      }
-      
-      if (!(await provider.canFulfill(request))) {
-        // For capability issues, we might also consider a fallback, but this simple version does not.
-        // This could be a place for future enhancement if the primary choice can't fulfill.
-        console.warn(`[AIModelRouter] Provider ${chosenProviderName} cannot fulfill request capabilities.`);
-        return this.createError(
-          'CAPABILITY',
-          `Provider ${chosenProviderName} cannot fulfill the current request capabilities.`,
-          400,
-          false
-        );
-      }
-      
-      const startTime = Date.now(); 
-      let result: AIModelResult;
-      let durationMs: number;
-
-      try {
-        result = await provider.generateResponse(request);
-        durationMs = Date.now() - startTime; 
-        if (result.ok) {
-          await this.circuitBreakerManager.recordSuccess(currentProviderHealthKey, durationMs);
-        } else {
-          if (result.retryable || result.code === 'UNKNOWN' || result.code === 'TIMEOUT') {
-            await this.circuitBreakerManager.recordFailure(currentProviderHealthKey, durationMs);
-          }
-        }
-      } catch (error: any) {
-        durationMs = Date.now() - startTime; 
-        console.error(`[AIModelRouter] Unhandled error during provider.generateResponse for ${chosenProviderName}#${providerCallRegion}:`, error);
-        await this.circuitBreakerManager.recordFailure(currentProviderHealthKey, durationMs);
-        throw error; 
-      }
-      return result;
+      // If all candidates failed
+      const finalTriedReasons = triedProvidersInfo.map(p => `${p.name}(${p.reason || 'unknown'})`).join(', ');
+      return this.createError(
+        'TIMEOUT',
+        `All candidate providers failed to generate a response. Attempted/Considered: ${finalTriedReasons || 'None'}`,
+        503,
+        true
+      );
 
     } catch (error: unknown) {
-      console.error(`[AIModelRouter] Outer catch: Unhandled error during request routing for ${chosenProviderName}#${providerCallRegion}:`, error);
-      if (chosenProviderName && providerCallRegion && currentProviderHealthKey) { // Ensure health key was determined
-        // Avoid double-recording if possible, but record failure if one occurred before/during provider selection.
-        await this.circuitBreakerManager.recordFailure(currentProviderHealthKey);
-      }
+      console.error(`[AIModelRouter] Outer catch: Unhandled critical error during request routing:`, error);
+      // Do not record generic failure here as we don't have a specific provider health key at this stage
       return this.createError(
         'UNKNOWN',
         `Critical error routing request: ${(error instanceof Error ? error.message : 'Unknown error' )}`,

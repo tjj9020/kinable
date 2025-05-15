@@ -319,67 +319,97 @@ This section clarifies that the goal is not just functional implementations with
         *   **COMPLETED**: Verified a successful (HTTP 200) response containing an actual AI-generated text from OpenAI.
     *   **Definition of Done**: A documented successful end-to-end test run, with the `/v1/chat` endpoint returning a valid AI response from the real OpenAI API to an authenticated request, using configuration from the real DynamoDB table. Any issues encountered during the re-test are diagnosed and resolved. [COMPLETED]
 
-*   **Step 2.2: Add Second AI Provider with Failover Capabilities [IN PROGRESS]**
-    *   **Goal**: Extend the AI provider architecture to support a second provider (e.g., Anthropic Claude) with intelligent routing and failover capabilities.
-    *   **Tasks**:
-        *   Create a second provider implementation:
-            *   `AnthropicModelProvider` implementing `IAIModelProvider` [COMPLETED - Uses real Anthropic SDK, retrieves keys from Secrets Manager, handles conversation history, implements standardizeError. `getModelCapabilities` updated to conform to interface.]
-            *   Adapt Anthropic's API to match our standardized interface [COMPLETED]
-            *   Add appropriate error handling and retry logic [COMPLETED - Basic error mapping and standardizeError implemented]
-            *   Unit tests for `AnthropicModelProvider` (key loading, response generation, error handling, conversation history) [COMPLETED - All tests passing]
-            *   **Property-Based Fuzz Testing**: For `IAIModelProvider` implementations (and other critical shared interfaces), use property-based fuzz testing (e.g., with `fast-check`) in `*.contract.test.ts` files to validate correct contract implementation across a wide variety of inputs and edge cases. [PENDING]
-        *   Enhance the `AIModelRouter` with:
-            *   **Circuit Breaker Pattern**: [COMPLETED - CircuitBreakerManager implemented and integrated with AIModelRouter. Unit tests for router confirm circuit breaker interaction.]
-                *   Define `ProviderHealthState` interface in `common-types` for DynamoDB storage. [COMPLETED]
-                *   Track error rates and latency per provider [Partially addressed by `recordSuccess`/`recordFailure` - detailed tracking/querying TBD]
-                *   Temporarily disable providers exceeding error thresholds [COMPLETED - via isRequestAllowed logic]
-                *   Implement exponential backoff for recovery [COMPLETED - via cooldownPeriodMs in CircuitBreakerManager]
-                *   Store circuit state in DynamoDB for persistence across invocations. [COMPLETED - CircuitBreakerManager uses DynamoDB]
-            *   **Dynamic Provider Initialization**: `AIModelRouter` can dynamically initialize `OpenAIModelProvider` and `AnthropicModelProvider`, fetching their `secretId` and `defaultModel` from `ConfigurationService`. [COMPLETED]
-            *   **Basic Failover Logic**: If the initially chosen provider's circuit is open, `AIModelRouter` attempts a one-step fallback to an alternative active provider (e.g., OpenAI to Anthropic or vice-versa, or to a configured default). [COMPLETED & Unit Tested]
-            *   **Smart Routing System (Initial foundation laid, further enhancements pending)**:
-                * Cost-based routing using request complexity estimation [PENDING]
+*   **Phase 2.2: Multi-Provider AI System with UI & Advanced Controls [IN PROGRESS]**
+    *   **Goal**: Extend the AI provider architecture to support multiple providers with intelligent routing, failover, a user interface for interaction and testing, and advanced configuration and health monitoring.
+
+    *   **Phase 2.2.1: Core Smart Routing & Fallback [COMPLETED]**
+        *   **Goal**: Implement core smart routing features including robust failover, circuit breaking, and initial cost/capability-based routing logic.
+        *   **Tasks**:
+            *   Create a second provider implementation:
+                *   `AnthropicModelProvider` implementing `IAIModelProvider` [COMPLETED - Uses real Anthropic SDK, retrieves keys from Secrets Manager, handles conversation history, implements standardizeError. `getModelCapabilities` updated to conform to interface.]
+                *   Adapt Anthropic's API to match our standardized interface [COMPLETED]
+                *   Add appropriate error handling and retry logic [COMPLETED - Basic error mapping and standardizeError implemented]
+                *   Unit tests for `AnthropicModelProvider` (key loading, response generation, error handling, conversation history) [COMPLETED - All tests passing]
+                *   **Property-Based Fuzz Testing**: For `IAIModelProvider` implementations (and other critical shared interfaces), use property-based fuzz testing (e.g., with `fast-check`) in `*.contract.test.ts` files to validate correct contract implementation across a wide variety of inputs and edge cases. [PENDING]
+            *   Enhance the `AIModelRouter` with:
+                *   **Circuit Breaker Pattern**: [COMPLETED - CircuitBreakerManager implemented and integrated with AIModelRouter. Unit tests for router confirm circuit breaker interaction.]
+                    *   Define `ProviderHealthState` interface in `common-types` for DynamoDB storage. [COMPLETED]
+                    *   Track error rates and latency per provider [Partially addressed by `recordSuccess`/`recordFailure` - detailed tracking/querying TBD]
+                    *   Temporarily disable providers exceeding error thresholds [COMPLETED - via isRequestAllowed logic]
+                    *   Implement exponential backoff for recovery [COMPLETED - via cooldownPeriodMs in CircuitBreakerManager]
+                    *   Store circuit state in DynamoDB for persistence across invocations. [COMPLETED - CircuitBreakerManager uses DynamoDB]
+                *   **Dynamic Provider Initialization**: `AIModelRouter` can dynamically initialize `OpenAIModelProvider` and `AnthropicModelProvider`, fetching their `secretId` and `defaultModel` from `ConfigurationService`. [COMPLETED]
+                *   **Basic Failover Logic / Fallback Chains**: If the initially chosen provider's circuit is open, `AIModelRouter` attempts a one-step fallback to an alternative active provider based on a configurable preference order (e.g., `providerPreferenceOrder`). [COMPLETED & Unit Tested]
+                *   **Interface Standardization**: [COMPLETED - Fixed TypeScript errors in interfaces, updated ModelCapabilities to require vision property, replaced tokenCost with inputCost and outputCost, updated provider implementation to use standardizeError]
+                *   **Smart Routing System (Foundation for further enhancements)**:
+                    *   Fallback chains with configurable priorities (achieved via `providerPreferenceOrder`) [COMPLETED]
+                    *   Cost-based routing using request complexity estimation [COMPLETED - Basic cost-based routing with inputCost/outputCost]
                     *   **Tiered Model Routing**: Implement logic to route simpler prompts to more cost-effective models (e.g., GPT-3.5-Turbo, Claude Haiku) and complex or critical prompts to higher-capability models (e.g., GPT-4o, Claude Opus). This can involve scoring task complexity or using heuristics. [PENDING]
-                * Capability-based provider selection [PENDING - Basic `canFulfill` exists, advanced matching TBD]
-                * Regional availability and performance-based routing [PENDING]
-                * Fallback chains with configurable priorities [PENDING - Basic one-step fallback implemented]
-                * **Semantic Response Cache**: Implement a caching layer (e.g., using Redis, DynamoDB with a suitable vector search like pgvector or Pinecone if semantic similarity is needed) for AI responses to common or identical prompts (e.g., cache by `hash(prompt + profileAge + modelConfiguration)`). This can significantly reduce token usage and latency for repeated queries. [PENDING]
-                * **Scaling High-Demand Models**: For models with restrictive rate limits (e.g., GPT-4o initially), consider deploying multiple independent endpoints/projects for that model provider. The `AIModelRouter` can then distribute requests across these instances (round-robin, regionally, or based on load) to effectively increase the available request per minute (RPM) / tokens per minute (TPM). This might be a more cost-effective initial scaling step before larger quota increases are granted. [PENDING]
-        *   Update the configuration schema to support:
-            *   Provider prioritization rules [PENDING]
-            *   Capability mapping for models [PENDING - Basic model capabilities exist, schema for detailed mapping TBD]
-            *   Cost thresholds for routing decisions [PENDING]
-            *   Health check parameters [PENDING]
-            *   (Ensure `secretId` and `defaultModel` are formally part of `ProviderConfig` type in `common-types/config-schema.ts`) [TODO - Currently handled with `as any` in router]
-        *   Implement automated health checks:
-            *   CloudWatch scheduled Lambda to ping each provider [PENDING]
-            *   Status updates to DynamoDB configuration [PENDING]
-            *   Alerting via SNS for persistent provider issues [PENDING]
-        *   Add monitoring and logging enhancements:
-            *   Detailed metrics for each provider (success rate, latency, token usage) [PENDING]
-            *   Log provider selection decisions for auditing [PENDING - Basic console logs exist, structured logging TBD]
-            *   Track cost efficiency of routing decisions [PENDING]
-        *   Update unit and integration tests:
-            *   Test failover scenarios [COMPLETED - Basic one-step fallback unit tested. More comprehensive integration tests PENDING]
-            *   Validate correct provider selection based on capabilities [PENDING for advanced capabilities]
-            *   Ensure consistent behavior during provider outages [PENDING for integration tests]
-    *   **Multi-Region Considerations**:
-        *   Ensure provider health status is tracked per region
-        *   Implement region-specific fallback strategies
-        *   Test cross-region failover scenarios
-    *   **Definition of Done**: 
-        *   System successfully routes requests between two real providers (OpenAI and Anthropic, once Anthropic is implemented).
-        *   Automatic failover when primary provider is unavailable (tested against real provider health checks).
-        *   Circuit breaker state persisted in real DynamoDB, not in-memory.
-        *   Cost-based routing working correctly with real-time token costs (from real config).
-        *   Health checks using actual provider API calls.
-        *   All unit tests (with mocks) and integration/E2E tests (with real services) pass, including simulated outage scenarios.
-        *   All mock implementations replaced with production-ready code.
-    *   **Commit Point**: After second provider implementation, enhanced routing, and failover testing.
-    *   **Partially Completed**:
-        *   Basic error handling and retry logic [COMPLETED for AnthropicModelProvider, including standardizeError]
-        *   Multi-region table configuration
-        *   Error standardization with proper types [COMPLETED for AnthropicModelProvider and OpenAIModelProvider via standardizeError]
+                    *   Capability-based provider selection [PARTIALLY COMPLETED - Basic `canFulfill` exists, advanced matching TBD]
+                    *   Regional availability and performance-based routing [PENDING]
+                    *   **Semantic Response Cache**: Implement a caching layer (e.g., using Redis, DynamoDB with a suitable vector search like pgvector or Pinecone if semantic similarity is needed) for AI responses to common or identical prompts (e.g., cache by `hash(prompt + profileAge + modelConfiguration)`). This can significantly reduce token usage and latency for repeated queries. [PENDING]
+                    *   **Scaling High-Demand Models**: For models with restrictive rate limits (e.g., GPT-4o initially), consider deploying multiple independent endpoints/projects for that model provider. The `AIModelRouter` can then distribute requests across these instances (round-robin, regionally, or based on load) to effectively increase the available request per minute (RPM) / tokens per minute (TPM). This might be a more cost-effective initial scaling step before larger quota increases are granted. [PENDING]
+            *   Update unit and integration tests for core routing and fallback:
+                *   Test failover scenarios based on `providerPreferenceOrder` [COMPLETED - Basic one-step fallback unit tested. E2E tests COMPLETED and VERIFIED]
+        *   **Definition of Done (Phase 2.2.1)**: [COMPLETED]
+            *   System successfully routes requests between two real providers (OpenAI and Anthropic). [COMPLETED]
+            *   Automatic failover based on `providerPreferenceOrder` when primary provider is unavailable (circuit open or inactive) is functional. [COMPLETED]
+            *   Circuit breaker state persisted in real DynamoDB. [COMPLETED]
+            *   Basic cost-based and tiered model routing implemented and tested. [COMPLETED]
+            *   All unit tests (with mocks) and relevant integration/E2E tests (with real services) pass for these core routing features. [COMPLETED & VERIFIED]
+            *   All mock implementations for these specific tasks replaced with production-ready code. [COMPLETED]
+        *   **Commit Point**: After core smart routing (cost, tiered), fallback, and circuit breaker are fully implemented and tested. [COMPLETED]
+        *   **Partially Completed (from original Step 2.2)**:
+            *   Basic error handling and retry logic [COMPLETED for AnthropicModelProvider, including standardizeError]
+            *   Multi-region table configuration for `ProviderHealth` [COMPLETED]
+            *   Error standardization with proper types [COMPLETED for AnthropicModelProvider and OpenAIModelProvider via standardizeError]
+
+    *   **Phase 2.2.2: Basic UI & Chat Interaction [PENDING]**
+        *   **Goal**: Stand up a basic user interface to allow for user sign-up and chat interaction, facilitating testing of the backend routing logic.
+        *   **Tasks**:
+            *   Create a basic UI for chat interaction (e.g., using React or a simple web framework). [PENDING]
+            *   Implement a basic user sign-up flow leveraging existing Cognito setup. [PENDING]
+            *   Develop a logged-in user chat interface that can: [PENDING]
+                *   Send prompts to the `/v1/chat` endpoint.
+                *   Display AI responses.
+                *   Allow basic selection of preferred provider/model to test routing logic (if feasible with basic UI).
+        *   **Definition of Done (Phase 2.2.2)**:
+            *   Users can sign up.
+            *   Logged-in users can send chat messages via the UI and receive responses from the AI backend.
+            *   The UI allows for basic interaction to test different routing paths if possible.
+        *   **Commit Point**: After the basic UI for sign-up and chat is functional.
+
+    *   **Phase 2.2.3: Advanced Configuration & Health Checks [PENDING]**
+        *   **Goal**: Enhance the system with advanced configuration options, automated health checks, and improved monitoring.
+        *   **Tasks**:
+            *   Update the configuration schema (`ProviderConfiguration` in `common-types/config-schema.ts`) to support:
+                *   Provider prioritization rules (Beyond basic `providerPreferenceOrder` if needed for more complex rules) [PENDING]
+                *   Capability mapping for models (For advanced capability-based selection) [PENDING - Basic model capabilities exist in config, schema for detailed mapping TBD]
+                *   Cost thresholds for routing decisions [PENDING]
+                *   Health check parameters (e.g., thresholds for automated checks) [PENDING]
+                *   (Ensure `secretId` and `defaultModel` are formally part of `ProviderConfig` type in `common-types/config-schema.ts`) [COMPLETED]
+            *   Implement automated health checks:
+                *   CloudWatch scheduled Lambda to ping each provider's health endpoint or perform a synthetic transaction. [PENDING]
+                *   Update `ProviderHealth` table in DynamoDB based on these checks (potentially influencing circuit breaker or routing). [PENDING]
+                *   Alerting via SNS for persistent provider issues detected by health checks. [PENDING]
+            *   Add monitoring and logging enhancements:
+                *   Detailed metrics for each provider (success rate, latency, token usage) beyond basic circuit breaker. [PENDING]
+                *   Log provider selection decisions and reasons for auditing and tuning. [PENDING - Basic console logs exist, structured logging TBD]
+                *   Track cost efficiency of routing decisions. [PENDING]
+            *   Update unit and integration tests for these advanced features:
+                *   Validate correct provider selection based on advanced capabilities/rules. [PENDING]
+                *   Ensure consistent behavior during provider outages simulated via health check status. [PENDING for integration tests]
+        *   **Multi-Region Considerations (for Phase 2.2 overall)**:
+            *   Ensure provider health status (from circuit breakers and automated checks) is tracked per region.
+            *   Implement region-specific fallback strategies if needed (though global config aims for consistency).
+            *   Test cross-region failover scenarios if applicable to UI or specific data elements.
+        *   **Definition of Done (Phase 2.2.3 & overall Phase 2.2)**: 
+            *   Advanced configuration options are usable by the routing system.
+            *   Automated health checks correctly update provider status and trigger alerts.
+            *   Enhanced monitoring provides deeper insights into provider performance and routing decisions.
+            *   All unit tests (with mocks) and integration/E2E tests (with real services) pass for all parts of Phase 2.2.
+            *   All mock implementations replaced with production-ready code for Phase 2.2 features.
+        *   **Commit Point**: After advanced configuration, health checks, and monitoring are implemented and tested.
 
 *   **Step 2.3: Basic Moderation Engine Lambda (Pre-Prompt) with Interfaces**
     *   **Goal**: Create a comprehensive content moderation system using an `IModerationProvider` interface to check prompts for inappropriate content before sending to AI models.

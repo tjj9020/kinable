@@ -61,7 +61,7 @@ export function standardizeError(error: any, providerName: string): AIModelError
             standardized.retryable = true;
         }
     }
-  } else if (error.response && error.response.data && error.response.data.type === 'error') { // Anthropic specific errors
+  } else if (error.response && error.response.data && error.response.data.error) { // Anthropic specific errors
     const anthropicError = error.response.data.error;
     standardized.detail = anthropicError.message || 'Anthropic API error';
     standardized.status = error.response.status;

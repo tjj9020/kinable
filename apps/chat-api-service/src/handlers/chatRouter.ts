@@ -69,7 +69,6 @@ export const handler = async (
     if (!router) { 
       router = new AIModelRouter(
         configService,
-        OPENAI_API_KEY_SECRET_ENV,
         SERVICE_REGION_ENV
       );
     }

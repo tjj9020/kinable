@@ -142,6 +142,7 @@ export class ConfigurationService {
         openai: {
           active: true,
           keyVersion: 1,
+          secretId: 'kinable/openai/api-key',
           endpoints: {
             'us-east-2': {
               url: 'https://api.openai.com/v1',
@@ -152,7 +153,8 @@ export class ConfigurationService {
           },
           models: {
             'gpt-4o': {
-              tokenCost: 0.01,
+              inputCost: 0.01,
+              outputCost: 0.03,
               priority: 1,
               capabilities: ['reasoning', 'creativity', 'coding', 'function_calling'],
               contextSize: 128000,
@@ -162,7 +164,8 @@ export class ConfigurationService {
               rolloutPercentage: 100
             },
             'gpt-4': {
-              tokenCost: 0.03,
+              inputCost: 0.01,
+              outputCost: 0.03,
               priority: 2,
               capabilities: ['reasoning', 'creativity', 'coding', 'function_calling'],
               contextSize: 8192,
@@ -172,7 +175,8 @@ export class ConfigurationService {
               rolloutPercentage: 100
             },
             'gpt-3.5-turbo': {
-              tokenCost: 0.001,
+              inputCost: 0.001,
+              outputCost: 0.002,
               priority: 3,
               capabilities: ['basic', 'function_calling'],
               contextSize: 4096,
@@ -210,7 +214,7 @@ export class ConfigurationService {
           }
         ],
         weights: DEFAULT_ROUTING_WEIGHTS,
-        defaultProvider: 'openai',
+        providerPreferenceOrder: ['openai'],
         defaultModel: 'gpt-3.5-turbo'
       },
       featureFlags: {
@@ -261,7 +265,5 @@ export class ConfigurationService {
       // Rethrow the error so the caller is aware of the failure
       throw new Error(`Failed to update configuration in DynamoDB: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    // console.warn('ConfigurationService.updateConfiguration is not yet fully implemented to write to DynamoDB.');
   }
-} 
+}

@@ -65,14 +65,16 @@ export interface AIModelRequest {
   conversationId?: string; 
   preferredProvider?: string;
   preferredModel?: string;
-  maxTokens?: number;
+  maxTokens?: number; // Max tokens for the completion
   temperature?: number;
   streaming?: boolean;
   tools?: ToolCall[];
   allowFallbackTools?: boolean;
   requiredCapabilities?: string[]; 
-  maxCostPerToken?: number;
+  maxCostPerToken?: number; // This might be deprecated or re-evaluated with new cost logic
   priority?: number;
+  estimatedInputTokens?: number;    // Optional: Estimated tokens for the input prompt + context
+  estimatedOutputTokens?: number;   // Optional: Estimated tokens for the desired output/completion
   context: RequestContext & { // Extend RequestContext specifically for this request type
     conversationHistory?: ChatMessage[];
     // other existing fields from RequestContext like familyId, profileId, userRegion, etc.
@@ -88,12 +90,12 @@ export interface ModelCapabilities {
   functionCalling: boolean;
   contextSize: number;
   streamingSupport: boolean;
-  vision?: boolean;
-  toolUse?: boolean;
-  configurable?: boolean;
-  maxOutputTokens?: number;
-  inputCost?: number;
-  outputCost?: number;
+  vision: boolean;         // Whether this model supports vision (now required)
+  toolUse?: boolean;       // Whether this model supports tool use
+  configurable?: boolean;  // Whether this model has configurable parameters
+  maxOutputTokens?: number; // Maximum tokens for the completion
+  inputCost?: number;      // Cost per 1K input tokens
+  outputCost?: number;     // Cost per 1K output tokens
 }
 
 export interface ProviderLimits {

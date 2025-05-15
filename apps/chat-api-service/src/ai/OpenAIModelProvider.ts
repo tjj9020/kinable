@@ -5,10 +5,12 @@ import {
   AIModelSuccess,
   ModelCapabilities,
   ProviderLimits,
-  TokenUsage
+  TokenUsage,
+  AIModelError
 } from '../../../../packages/common-types/src/ai-interfaces';
 import OpenAI from 'openai';
 import { SecretsManagerClient, GetSecretValueCommand, GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
+import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
 
 interface ApiKeys {
   current: string;
@@ -36,7 +38,6 @@ interface ApiKeys {
  */
 export class OpenAIModelProvider extends BaseAIModelProvider {
   private currentApiKey?: string;
-  private previousApiKey?: string | null = null;
   private openaiClient: OpenAI;
   private clientProvided: boolean;
 
@@ -51,10 +52,18 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
    * API keys are fetched from AWS Secrets Manager on demand if no client is provided.
    * @param secretId The ID or ARN of the secret in AWS Secrets Manager.
    * @param awsClientRegion The AWS region for the Secrets Manager client.
+   * @param dbProviderInstance An instance of IDatabaseProvider for circuit breaker state.
+   * @param defaultModel The default model identifier to use for this provider.
    * @param openAIClientInstance Optional pre-configured OpenAI client instance for testing or specific use cases.
    */
-  constructor(secretId: string, awsClientRegion: string, openAIClientInstance?: OpenAI) {
-    super('openai');
+  constructor(
+    secretId: string, 
+    awsClientRegion: string, 
+    dbProviderInstance: IDatabaseProvider, 
+    defaultModel: string,
+    openAIClientInstance?: OpenAI
+  ) {
+    super('openai', defaultModel, dbProviderInstance);
     this.secretId = secretId;
     this.awsClientRegion = awsClientRegion;
     this.secretsManagerClient = new SecretsManagerClient({ region: this.awsClientRegion });
@@ -80,7 +89,6 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
         const secretJson = JSON.parse(commandOutput.SecretString) as ApiKeys;
         if (secretJson.current) {
           this.currentApiKey = secretJson.current;
-          this.previousApiKey = secretJson.previous || null;
           return; // Successfully fetched and parsed
         } else {
           throw new Error('Fetched secret does not contain a "current" API key.');
@@ -134,46 +142,27 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
   /**
    * Generate a response using OpenAI API
    */
-  async generateResponse(request: AIModelRequest): Promise<AIModelResult> {
+  protected async _generateResponse(request: AIModelRequest): Promise<AIModelResult> {
     try {
       await this._ensureApiKeysLoaded();
     } catch (keyLoadError: any) {
       return this.createError(
         'AUTH',
         `Failed to load API credentials: ${keyLoadError.message || keyLoadError}`,
-        500, // Internal server error type for credential loading failure
-        false // Not retryable at this stage from the caller's perspective
+        500, // status
+        false
       );
     }
 
     if (!this.openaiClient || (!this.clientProvided && !this.currentApiKey)) {
-       // This should ideally be caught by _ensureApiKeysLoaded, but as a safeguard:
       return this.createError('AUTH', 'OpenAI client not initialized due to missing API key or client not provided.', 500, false);
     }
 
-    // Check if we can fulfill this request
-    if (!this.canFulfill(request)) {
-      return this.createError(
-        'CAPABILITY',
-        'This provider cannot fulfill the request with the required capabilities',
-        400,
-        false
-      );
-    }
-    
-    // Check token bucket
-    const estimatedTokens = this.estimateTokens(request);
-    if (!this.consumeTokens(estimatedTokens)) {
-      return this.createError(
-        'RATE_LIMIT',
-        'Rate limit exceeded for this provider',
-        429,
-        true
-      );
-    }
-    
-    const model = request.preferredModel || this.getDefaultModel();
-    const startTime = Date.now();
+    // Token consumption and canFulfill checks are now handled by the public generateResponse in BaseAIModelProvider.
+    // This method should focus on the actual API call.
+
+    const model = request.preferredModel || this.defaultModel; // Use this.defaultModel from base
+    const startTime = Date.now(); // Define startTime here to calculate latency for the API call
     
     // Define a helper function to create request parameters
     const createChatCompletionParams = (currentRequest: AIModelRequest, currentModel: string): OpenAI.Chat.Completions.ChatCompletionCreateParams => {
@@ -204,17 +193,12 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       };
     };
 
-    // Declare completionRequestParams here for the first attempt
     let completionRequestParams = createChatCompletionParams(request, model);
 
     try {
       const response = await this.openaiClient.chat.completions.create(completionRequestParams) as OpenAI.Chat.Completions.ChatCompletion;
-
-      const endTime = Date.now();
-      const latency = endTime - startTime;
-      
-      // Update health metrics
-      this.updateHealthMetrics(true, latency);
+      const endTime = Date.now(); // Define endTime
+      const latency = endTime - startTime; // Calculate latency
       
       if (!response.choices || response.choices.length === 0 || !response.choices[0].message || !response.choices[0].message.content) {
         return this.createError('UNKNOWN', 'OpenAI response format error: No content.', 500, true);
@@ -237,125 +221,61 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
         meta: {
           provider: this.providerName,
           model: response.model,
-          features: this.getModelCapabilities(model).functionCalling ? ['function_calling'] : [], // This should adapt based on actual features used/requested
+          features: this.getModelCapabilities(model).functionCalling ? ['function_calling'] : [],
           region: request.context.region,
           latency,
-          timestamp: endTime
+          timestamp: endTime 
         }
-        // stream: undefined // TODO: Add stream if streaming response
       };
-      
       return result;
-    } catch (error: unknown) {
-      const endTime = Date.now();
-      const latency = endTime - startTime;
-      
-      // Update health metrics
-      this.updateHealthMetrics(false, latency);
-      
-      // Handle specific OpenAI errors
-      // In a real implementation, we would parse the error from the OpenAI SDK
-      // Need to check the error type before accessing properties like status
-      // let errorStatus = 500; // Default to 500 for unknown errors
-      // let errorMessage = 'Unknown error';
-      // if (typeof error === 'object' && error !== null) {
-      //   // Basic check if it looks like an error object with status/message
-      //   if ('status' in error && typeof error.status === 'number') {
-      //     errorStatus = error.status;
-      //   }
-      //   if ('message' in error && typeof error.message === 'string') {
-      //     errorMessage = error.message;
-      //   }
-      // } else if (typeof error === 'string') {
-      //   errorMessage = error;
-      // }
-
+    } catch (error: any) {
+      console.error(`[OpenAIModelProvider] Error calling OpenAI API (model: ${model}):`, error);
+      // Try to map OpenAI specific errors if possible, otherwise generic
       if (error instanceof OpenAI.APIError) {
-        const errorStatus = error.status || 500;
-        const errorMessage = error.message || 'Unknown OpenAI API Error';
-        const errorCode = error.code;
+        let errorCode: AIModelError['code'] = 'UNKNOWN';
+        let retryable = true; // Default for unknown API errors
+        const status = error.status;
 
-        if (errorStatus === 401) { // Authentication error
-         // Try with previous key if available
-          if (this.previousApiKey && this.currentApiKey !== this.previousApiKey) {
-            console.warn('OpenAI API key authentication failed. Attempting to switch to previous key.');
-            this.currentApiKey = this.previousApiKey;
-            this.previousApiKey = null; // Only try previous key once
-            this.openaiClient = new OpenAI({ apiKey: this.currentApiKey }); // Re-initialize client with new key
-            
-            // Retry the request with the new (previous) key
-            // Re-create params as the request object might have been mutated or for clarity
-            completionRequestParams = createChatCompletionParams(request, model); 
-            const retryResponse = await this.openaiClient.chat.completions.create(completionRequestParams)  as OpenAI.Chat.Completions.ChatCompletion;
-            
-            // If retry is successful, update health and return result
-            const retryEndTime = Date.now();
-            const retryLatency = retryEndTime - startTime; // Recalculate latency for this attempt
-            this.updateHealthMetrics(true, retryLatency);
-
-            if (!retryResponse.choices || retryResponse.choices.length === 0 || !retryResponse.choices[0].message || !retryResponse.choices[0].message.content) {
-              return this.createError('UNKNOWN', 'OpenAI retry response format error: No content.', 500, true);
+        if (error instanceof OpenAI.RateLimitError) { // HTTP 429
+          errorCode = 'RATE_LIMIT';
+        } else if (error instanceof OpenAI.AuthenticationError) { // HTTP 401
+          errorCode = 'AUTH';
+          retryable = false;
+        } else if (error instanceof OpenAI.PermissionDeniedError) { // HTTP 403
+          errorCode = 'AUTH'; // Or a more specific PERMISSION_DENIED
+          retryable = false;
+        } else if (error instanceof OpenAI.NotFoundError) { // HTTP 404 (e.g. model not found)
+            errorCode = 'CAPABILITY';
+            retryable = false;
+        } else if (error instanceof OpenAI.ConflictError || error instanceof OpenAI.UnprocessableEntityError) { // HTTP 409, 422
+            errorCode = 'UNKNOWN'; // Or map to bad request/content error
+            retryable = false;
+        } else if (error instanceof OpenAI.InternalServerError) { // HTTP 500+
+            errorCode = 'UNKNOWN'; // Retryable
+        } else {
+             // Fallback for other OpenAI APIErrors
+            if (status === 401) { // Explicitly check for 401 status
+                errorCode = 'AUTH';
+                retryable = false;
+            } else if (status === 403) { // Explicitly check for 403 status
+                errorCode = 'AUTH'; 
+                retryable = false;
+            } else if (status && status >= 500) {
+                errorCode = 'UNKNOWN';
+                retryable = true;
+            } else if (status && status >= 400 && status < 500) { // Other 4xx client errors
+                errorCode = 'CAPABILITY'; 
+                retryable = false;
             }
-            if (!retryResponse.usage) {
-              return this.createError('UNKNOWN', 'OpenAI retry response format error: No usage data.', 500, true);
-            }
-
-            const retryTokenUsage: TokenUsage = {
-              prompt: retryResponse.usage.prompt_tokens,
-              completion: retryResponse.usage.completion_tokens,
-              total: retryResponse.usage.total_tokens
-            };
-      
-            const retryResult: AIModelSuccess = {
-              ok: true,
-              text: retryResponse.choices[0].message.content,
-              tokens: retryTokenUsage,
-              meta: {
-                provider: this.providerName,
-                model: retryResponse.model,
-                features: this.getModelCapabilities(model).functionCalling ? ['function_calling'] : [],
-                region: request.context.region,
-                latency: retryLatency,
-                timestamp: retryEndTime
-              }
-            };
-            console.log('Successfully used previous OpenAI API key.');
-            return retryResult;
-
-          }
-          return this.createError('AUTH', `OpenAI Authentication Failed: ${errorMessage}`, 401, false);
+            // If status is undefined or doesn't fit above, it remains UNKNOWN and retryable (default)
         }
-
-        if (errorStatus === 429 || errorCode === 'rate_limit_exceeded') { // Rate limit error
-          return this.createError('RATE_LIMIT', `OpenAI Rate Limit Exceeded: ${errorMessage}`, 429, true);
-        }
-
-        if (errorStatus === 400 || errorCode === 'invalid_request_error') { // Bad request (e.g. content policy, bad input)
-          // OpenAI uses 400 for content policy violations too.
-          // Example: error.code === 'content_policy_violation'
-          if (errorCode === 'content_policy_violation') {
-             return this.createError('CONTENT', `OpenAI Content Policy Violation: ${errorMessage}`, 400, false);
-          }
-          return this.createError('CAPABILITY', `OpenAI Invalid Request: ${errorMessage}`, 400, false); // Or 'UNKNOWN' or 'CONTENT' depending on specifics
-        }
-        
-        // Default to UNKNOWN for other OpenAI API errors
-        return this.createError('UNKNOWN', `OpenAI API Error: ${errorMessage} (Status: ${errorStatus}, Code: ${errorCode})`, errorStatus, errorStatus >= 500);
-
-      } else if (error instanceof Error) { // Handle generic JS errors
-        return this.createError('UNKNOWN', `Unexpected error: ${error.message}`, 500, true);
+        return this.createError(errorCode, `OpenAI API Error: ${error.message}`, status, retryable);
       }
-
-      // For all other errors
-      return this.createError(
-        'UNKNOWN',
-        `OpenAI error: ${error instanceof Error ? error.message : String(error)}`,
-        500, // Default status for truly unknown non-API errors
-        true // Retry unknown server-side issues
-      );
+      // For non-OpenAI SDK errors (network, etc.)
+      return this.createError('UNKNOWN', `Failed to generate response from OpenAI: ${error.message || 'Unexpected error'}`, undefined, true);
     }
   }
-  
+
   /**
    * Get the capabilities of a specific OpenAI model
    */
@@ -417,15 +337,6 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
     return 'gpt-3.5-turbo';
   }
   
-  /**
-   * Estimate tokens for OpenAI models
-   * This is a very basic estimation, real implementation would use a tokenizer like tiktoken
-   */
-  // protected estimateTokens(request: AIModelRequest): number {
-  //   // Rough estimate: 1 token per 4 characters for English text
-  //   return Math.ceil((request.prompt.length / 4) + (request.maxTokens || 256));
-  // }
-
   /**
    * Simulate a call to OpenAI API - This method will be removed
    */

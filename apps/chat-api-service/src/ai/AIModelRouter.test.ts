@@ -3,15 +3,20 @@ import { ConfigurationService } from './ConfigurationService';
 import { OpenAIModelProvider } from './OpenAIModelProvider';
 import { AIModelRequest, AIModelResult, IAIModelProvider, AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
 import { ProviderConfiguration } from '../../../../packages/common-types/src/config-schema';
-import { RequestContext } from '../../../../packages/common-types/src/core-interfaces';
+import { RequestContext, IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
 
 // Mock ConfigurationService to return a mock constructor
 const mockGetConfiguration = jest.fn();
+const mockUpdateConfiguration = jest.fn();
+const mockGetDBProvider = jest.fn();
+
 jest.mock('./ConfigurationService', () => {
   return {
     ConfigurationService: jest.fn().mockImplementation(() => {
       return {
         getConfiguration: mockGetConfiguration,
+        updateConfiguration: mockUpdateConfiguration,
+        getDBProvider: mockGetDBProvider,
         // Add mocks for any other methods of ConfigurationService used by AIModelRouter if necessary
       };
     }),
@@ -19,6 +24,7 @@ jest.mock('./ConfigurationService', () => {
 });
 
 // Mock OpenAIModelProvider (top-level)
+const MockedOpenAIModelProviderConstructor = jest.fn();
 const mockOpenAIGenerateResponse = jest.fn();
 const mockOpenAICanFulfill = jest.fn().mockReturnValue(true);
 const mockOpenAIGetModelCapabilities = jest.fn().mockReturnValue({}); // Add default mock
@@ -27,7 +33,8 @@ const mockOpenAIGetProviderLimits = jest.fn().mockReturnValue({}); // Add defaul
 
 jest.mock('./OpenAIModelProvider', () => {
   return {
-    OpenAIModelProvider: jest.fn().mockImplementation((_secretId, _awsClientRegion) => {
+    OpenAIModelProvider: jest.fn().mockImplementation((secretId, awsClientRegion, dbProvider, defaultModel) => {
+      MockedOpenAIModelProviderConstructor(secretId, awsClientRegion, dbProvider, defaultModel);
       return {
         generateResponse: mockOpenAIGenerateResponse,
         canFulfill: mockOpenAICanFulfill,
@@ -104,7 +111,7 @@ describe('AIModelRouter', () => {
   let router: AIModelRouter;
   let mockConfigServiceInstance: ConfigurationService;
   let mockGenericOpenAIProvider: IAIModelProvider;
-  let MockedOpenAIModelProviderConstructor: jest.MockedClass<typeof OpenAIModelProvider>;
+  let mockDatabaseProvider: jest.Mocked<IDatabaseProvider>;
 
   const MOCK_OPENAI_SECRET_ID = 'mock-openai-secret-id';
   const MOCK_AWS_CLIENT_REGION = 'us-west-2';
@@ -112,10 +119,17 @@ describe('AIModelRouter', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    MockedOpenAIModelProviderConstructor = OpenAIModelProvider as jest.MockedClass<typeof OpenAIModelProvider>;
-
     mockConfigServiceInstance = new (ConfigurationService as any)() as ConfigurationService;
     
+    mockDatabaseProvider = {
+      getItem: jest.fn(),
+      putItem: jest.fn(),
+      updateItem: jest.fn(),
+      deleteItem: jest.fn(),
+      query: jest.fn(),
+    };
+    mockGetDBProvider.mockReturnValue(mockDatabaseProvider);
+
     mockGetConfiguration.mockReset();
     // Expanded mock ProviderConfiguration to satisfy the ProviderConfig interface more completely
     mockGetConfiguration.mockResolvedValue({
@@ -392,7 +406,7 @@ describe('AIModelRouter', () => {
     expect(mockConfigServiceInstance.getConfiguration).toHaveBeenCalledTimes(1);
     // Check that the OpenAIModelProvider constructor was called by initializeOpenAI
     expect(MockedOpenAIModelProviderConstructor).toHaveBeenCalledTimes(1);
-    expect(MockedOpenAIModelProviderConstructor).toHaveBeenCalledWith(MOCK_OPENAI_SECRET_ID, MOCK_AWS_CLIENT_REGION);
+    expect(MockedOpenAIModelProviderConstructor).toHaveBeenCalledWith(MOCK_OPENAI_SECRET_ID, MOCK_AWS_CLIENT_REGION, mockDatabaseProvider, 'gpt-3.5-turbo');
     
     // Check that the method on the (mocked) dynamically created instance was called
     expect(mockOpenAIGenerateResponse).toHaveBeenCalledTimes(1);
@@ -435,7 +449,7 @@ describe('AIModelRouter', () => {
     // Configure the OpenAIModelProvider mock constructor to throw an error for this test
     MockedOpenAIModelProviderConstructor.mockClear();
     const initError = new Error('Failed to initialize OpenAI provider');
-    MockedOpenAIModelProviderConstructor.mockImplementation((_secretId, _awsClientRegion) => {
+    MockedOpenAIModelProviderConstructor.mockImplementation((_secretId, _awsClientRegion, _dbProvider, _defaultModel) => {
       throw initError;
     });
 
@@ -451,7 +465,7 @@ describe('AIModelRouter', () => {
     }
 
     // Reset mock implementation for subsequent tests to the default top-level mock behavior
-    MockedOpenAIModelProviderConstructor.mockImplementation((_secretId, _awsClientRegion) => {
+    MockedOpenAIModelProviderConstructor.mockImplementation((_secretId, _awsClientRegion, _dbProvider, _defaultModel) => {
       // The arguments secretId and awsClientRegion must be declared to match the original constructor's signature,
       // but they are not used in creating this specific mock instance's behavior.
       return {

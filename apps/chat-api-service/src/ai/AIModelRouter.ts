@@ -46,11 +46,24 @@ export class AIModelRouter {
    */
   private async initializeOpenAI(): Promise<OpenAIModelProvider> {
     if (!this.providers.has('openai')) {
-      // const mockApiKey = 'sk-mock-key-12345'; // Removed mock key
-      const provider = new OpenAIModelProvider(this.openAISecretId, this.awsClientRegion);
+      // Assuming ConfigurationService has a method getDBProvider() that returns IDatabaseProvider
+      // And using a default model string for OpenAI. This could come from config too.
+      const dbProvider = this.configService.getDBProvider();
+      if (!dbProvider) {
+        throw new Error("Database provider not available from ConfigurationService in AIModelRouter");
+      }
+      const defaultOpenAIModel = "gpt-3.5-turbo"; // Or fetch from config if appropriate
+      const provider = new OpenAIModelProvider(
+        this.openAISecretId, 
+        this.awsClientRegion, 
+        dbProvider, 
+        defaultOpenAIModel
+      );
       this.providers.set('openai', provider);
     }
     
+    // The type assertion might still be an issue if IAIModelProvider properties don't fully align
+    // but the primary constructor and canFulfill errors should be addressed.
     return this.providers.get('openai') as OpenAIModelProvider;
   }
   
@@ -95,7 +108,7 @@ export class AIModelRouter {
       }
       
       // Check if the provider can fulfill the request
-      if (!provider.canFulfill(request)) {
+      if (!(await provider.canFulfill(request))) {
         return this.createError(
           'CAPABILITY',
           `Provider ${providerName} cannot fulfill the request`,

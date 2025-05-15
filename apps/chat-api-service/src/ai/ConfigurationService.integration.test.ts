@@ -182,7 +182,7 @@ describe('ConfigurationService Integration Tests', () => {
     } catch (error: any) {
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toContain('Invalid configuration'); 
-      expect(error.message).toContain('Routing weights must sum to 1');
+      expect(error.message).toContain('Routing weights must sum to 1.0');
     }
   });
 

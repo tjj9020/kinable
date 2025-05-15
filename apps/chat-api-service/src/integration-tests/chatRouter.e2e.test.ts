@@ -15,6 +15,7 @@ import { DynamoDBDocumentClient, PutCommand, DeleteCommand, GetCommand } from "@
 import fetch from "node-fetch"; // Or use native fetch in Node 18+
 import { v4 as uuidv4 } from 'uuid';
 import { ProviderConfiguration } from "@kinable/common-types"; // Adjust path as needed
+import * as https from 'https'; // Added import
 
 // Load environment variables from .env.dev.remote, similar to other integration tests
 
@@ -279,9 +280,13 @@ describe("Chat Router E2E Test", () => {
     // This test assumes the lambda is configured to use TEST_CHAT_CONFIG_ID.
     // Alternatively, the test user's request could specify which config to use if the API supported it.
     
+    // Create an agent to disable keepAlive for this fetch call
+    const agent = new https.Agent({ keepAlive: false });
+
     console.log(`[E2E Test] Sending POST request to: ${fullChatEndpoint}`);
     const response = await fetch(fullChatEndpoint, {
       method: "POST",
+      agent: agent, // Use the custom agent
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${testUserIdToken}`,

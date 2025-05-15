@@ -1,6 +1,6 @@
 import { AnthropicModelProvider } from './AnthropicModelProvider';
 import { AIModelRequest, ChatMessage } from '../../../../packages/common-types/src/ai-interfaces';
-import { RequestContext } from '../../../../packages/common-types/src/core-interfaces';
+import { RequestContext, IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
 import { GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
 import Anthropic from '@anthropic-ai/sdk';
 
@@ -29,6 +29,16 @@ const mockContext: RequestContext = {
 
 const MOCK_SECRET_ID = 'test-anthropic-secret';
 const MOCK_AWS_REGION = 'us-test-1'; // Region for Secrets Manager
+const MOCK_ANTHROPIC_DEFAULT_MODEL = 'claude-3-haiku-20240307'; // Added
+
+// Mock IDatabaseProvider for Anthropic tests
+const mockDbProvider: IDatabaseProvider = {
+  getItem: jest.fn(),
+  putItem: jest.fn(),
+  updateItem: jest.fn(),
+  deleteItem: jest.fn(),
+  query: jest.fn(),
+};
 
 describe('AnthropicModelProvider', () => {
   let provider: AnthropicModelProvider;
@@ -52,7 +62,13 @@ describe('AnthropicModelProvider', () => {
   // --- Tests for when Anthropic client IS INJECTED ---
   describe('with injected Anthropic client', () => {
     beforeEach(() => {
-      provider = new AnthropicModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockAnthropicClient as any);
+      provider = new AnthropicModelProvider(
+        MOCK_SECRET_ID, 
+        MOCK_AWS_REGION, 
+        mockDbProvider, // Added
+        MOCK_ANTHROPIC_DEFAULT_MODEL, // Added
+        mockAnthropicClient as any
+      );
       provider.setProviderConfig({
         provider: 'anthropic',
         active: true,
@@ -314,7 +330,12 @@ describe('AnthropicModelProvider', () => {
   // --- Tests for when Anthropic client IS NOT INJECTED (fetches keys) ---
   describe('without injected Anthropic client (fetches keys)', () => {
     beforeEach(() => {
-      provider = new AnthropicModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION);
+      provider = new AnthropicModelProvider(
+        MOCK_SECRET_ID, 
+        MOCK_AWS_REGION, 
+        mockDbProvider, // Added
+        MOCK_ANTHROPIC_DEFAULT_MODEL // Added
+      );
       provider.setProviderConfig({
         provider: 'anthropic',
         active: true,
@@ -325,9 +346,20 @@ describe('AnthropicModelProvider', () => {
         },
         rateLimits: { rpm: 1000, tpm: 400000 }
       } as any);
+      globalMockSecretsManagerSend.mockReset(); // Reset mock for AWS SDK v3
+      // Mock circuit breaker calls for this suite. Note: Anthropic tests might use a different region in mockContext.
+      // This mock needs to be robust or specific to the region used in tests.
+      jest.spyOn(provider as any, '_getCircuitState').mockImplementation(async (...args: any[]) => {
+        const region = args[0] as string;
+        if (region === mockContext.region) {
+          return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `anthropic#${mockContext.region}` };
+        }
+        return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `anthropic#${region}` };
+      });
+      jest.spyOn(provider as any, '_updateCircuitState').mockResolvedValue(undefined);
     });
 
-    test('should successfully fetch API keys and prepare to generate response', async () => {
+    test('should fetch API keys and generate response', async () => {
       globalMockSecretsManagerSend.mockResolvedValueOnce({
         SecretString: JSON.stringify({ current: 'test-anthropic-api-key' }),
       } as GetSecretValueCommandOutput);
@@ -371,15 +403,14 @@ describe('AnthropicModelProvider', () => {
       }
     });
      test('should handle malformed secret string from Secrets Manager', async () => {
-      globalMockSecretsManagerSend.mockResolvedValueOnce({
-        SecretString: 'not-a-json-string',
-      } as GetSecretValueCommandOutput);
-
-      const result = await provider.generateResponse({ prompt: 'Test malformed secret', context: mockContext });
+      globalMockSecretsManagerSend.mockResolvedValueOnce({ SecretString: 'not-a-json-string', $metadata: {} } as GetSecretValueCommandOutput);
+      const malformedSecretRequest: AIModelRequest = { prompt: 'Test malformed secret', context: mockContext };
+      const result = await provider.generateResponse(malformedSecretRequest);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.code).toBe('AUTH');
-        expect(result.detail).toMatch(/\\[AnthropicModelProvider\\] Failed to initialize client or load API credentials: Failed to load API keys from Secrets Manager: Unexpected token.*/);
+        expect(result.detail).toContain('[AnthropicModelProvider] Failed to initialize client or load API credentials:');
+        expect(result.detail).toMatch(/Failed to load API keys from Secrets Manager: Unexpected token .*JSON/i);
       }
     });
 
@@ -393,6 +424,19 @@ describe('AnthropicModelProvider', () => {
       if (!result.ok) {
         expect(result.code).toBe('AUTH');
         expect(result.detail).toBe('[AnthropicModelProvider] Failed to initialize client or load API credentials: Failed to load API keys from Secrets Manager: Fetched secret does not contain a "current" API key.');
+      }
+    });
+
+    test('should handle undefined SecretString from Secrets Manager', async () => {
+      globalMockSecretsManagerSend.mockResolvedValueOnce({
+        SecretString: undefined,
+      } as GetSecretValueCommandOutput);
+
+      const result = await provider.generateResponse({ prompt: 'Test undefined SecretString', context: mockContext });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('AUTH');
+        expect(result.detail).toContain('[AnthropicModelProvider] Failed to initialize client or load API credentials: Failed to load API keys from Secrets Manager: SecretString is empty or not found in Secrets Manager response.');
       }
     });
   });

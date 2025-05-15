@@ -1,0 +1,946 @@
+import { BaseAIModelProvider } from './BaseAIModelProvider';
+import {
+  AIModelRequest,
+  AIModelResult,
+  ModelCapabilities,
+  ProviderHealthStatus,
+  AIModelError,
+  ProviderLimits,
+} from '../../../../packages/common-types/src/ai-interfaces';
+import { ProviderConfig } from '../../../../packages/common-types/src/config-schema';
+import { SecretsManagerClient } from '../../../../packages/common-types/src/secrets-manager';
+import { Anthropic } from '@anthropic-ai/sdk';
+
+export class AnthropicModelProvider extends BaseAIModelProvider {
+  private secretId: string;
+  private awsClientRegion: string;
+  private providerConfig: ProviderConfig | null = null;
+  private secretsManagerClient: SecretsManagerClient;
+  private currentApiKey?: string;
+  private anthropicClient!: Anthropic;
+  private clientProvided: boolean;
+
+  constructor(secretId: string, awsClientRegion: string, clientProvided: boolean) {
+    super();
+    this.secretId = secretId;
+    this.awsClientRegion = awsClientRegion;
+    this.clientProvided = clientProvided;
+    this.secretsManagerClient = new SecretsManagerClient();
+    this.anthropicClient = new Anthropic();
+  }
+
+  async getModelCapabilities(): Promise<ModelCapabilities> {
+    // Implementation of getModelCapabilities method
+  }
+
+  async getModelHealthStatus(): Promise<ProviderHealthStatus> {
+    // Implementation of getModelHealthStatus method
+  }
+
+  async getModelError(): Promise<AIModelError | null> {
+    // Implementation of getModelError method
+  }
+
+  async getModelLimits(): Promise<ProviderLimits> {
+    // Implementation of getModelLimits method
+  }
+
+  async getModelResult(request: AIModelRequest): Promise<AIModelResult> {
+    // Implementation of getModelResult method
+  }
+
+  async getModelConfig(): Promise<ProviderConfig> {
+    // Implementation of getModelConfig method
+  }
+
+  async getModelApiKey(): Promise<string> {
+    // Implementation of getModelApiKey method
+  }
+
+  async getModelTokenUsage(request: AIModelRequest): Promise<TokenUsage> {
+    // Implementation of getModelTokenUsage method
+  }
+
+  async getModelChatMessage(request: AIModelRequest): Promise<ChatMessage> {
+    // Implementation of getModelChatMessage method
+  }
+
+  async getModelProviderMeta(): Promise<ProviderMeta> {
+    // Implementation of getModelProviderMeta method
+  }
+
+  async getModelPreviousApiKey(): Promise<string | null> {
+    // Implementation of getModelPreviousApiKey method
+  }
+
+  async getModelPreviousApiKeyStatus(): Promise<boolean> {
+    // Implementation of getModelPreviousApiKeyStatus method
+  }
+
+  async getModelPreviousApiKeyStatusMessage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusMessage method
+  }
+
+  async getModelPreviousApiKeyStatusDate(): Promise<Date> {
+    // Implementation of getModelPreviousApiKeyStatusDate method
+  }
+
+  async getModelPreviousApiKeyStatusUser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusUser method
+  }
+
+  async getModelPreviousApiKeyStatusIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusIp method
+  }
+
+  async getModelPreviousApiKeyStatusUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusReferer method
+  }
+
+  async getModelPreviousApiKeyStatusLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDevice method
+  }
+
+  async getModelPreviousApiKeyStatusBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceType(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceType method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceModel(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceModel method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceManufacturer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceManufacturer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceIp(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceIp method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceUserAgent(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceUserAgent method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceReferer(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceReferer method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLocation(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLocation method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceDevice(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceDevice method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceBrowser(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceBrowser method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOs(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOs method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceOsVersion(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceOsVersion method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceLanguage(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceLanguage method
+  }
+
+  async getModelPreviousApiKeyStatusDeviceTimezone(): Promise<string> {
+    // Implementation of getModelPreviousApiKeyStatusDeviceTimezone method
+ 

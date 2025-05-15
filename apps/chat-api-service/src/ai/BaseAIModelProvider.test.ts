@@ -1,6 +1,15 @@
 import { BaseAIModelProvider } from './BaseAIModelProvider';
-import { AIModelRequest, AIModelResult, ModelCapabilities, ProviderHealthStatus, ProviderLimits } from '../../../../packages/common-types/src/ai-interfaces';
-import { RequestContext } from '../../../../packages/common-types/src/core-interfaces';
+import { AIModelRequest, AIModelResult, ModelCapabilities, ProviderHealthStatus, ProviderLimits, AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
+import { RequestContext, IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
+
+// Mock Database Provider
+const mockDbProvider: IDatabaseProvider = {
+  getItem: jest.fn(),
+  putItem: jest.fn(),
+  updateItem: jest.fn(),
+  deleteItem: jest.fn(),
+  query: jest.fn(),
+};
 
 // Create a concrete implementation for testing
 class TestProvider extends BaseAIModelProvider {
@@ -8,59 +17,69 @@ class TestProvider extends BaseAIModelProvider {
   public mockResult: AIModelResult | null = null;
   
   constructor(_apiKey: string) {
-    super('test-provider'); // Pass provider name to the parent constructor
+    super('test-provider', 'default-test-model', mockDbProvider);
+    this.healthStatus.available = true; 
   }
   
-  // Implement the abstract methods
   async generateResponse(request: AIModelRequest): Promise<AIModelResult> {
-    try {
-      if (this.errorToThrow) {
-        throw this.errorToThrow;
-      }
-      
-      if (this.mockResult) {
-        return this.mockResult;
-      }
-      
-      return await this.callProviderAPI(request);
-    } catch (error) {
-      if (error instanceof Error) {
-        return this.standardizeError(error);
-      }
-      return this.createError('UNKNOWN', 'Unknown error occurred');
+    return super.generateResponse(request);
+  }
+  
+  // Implementation for the abstract _generateResponse
+  protected _generateResponse(request: AIModelRequest): Promise<AIModelResult> {
+    if (this.errorToThrow) {
+      return Promise.reject(this.errorToThrow);
     }
+    if (this.mockResult) {
+      return Promise.resolve(this.mockResult);
+    }
+
+    const modelToUse = request.preferredModel || this.defaultModel;
+    return Promise.resolve({
+      ok: true,
+      text: `Mocked response from _generateResponse for ${modelToUse}`,
+      tokens: { prompt: 5, completion: 10, total: 15 },
+      meta: {
+        provider: this.providerName,
+        model: modelToUse,
+        features: [],
+        region: request.context.region,
+        latency: 100,
+        timestamp: Date.now(),
+      },
+    } as AIModelResult);
   }
   
   getDefaultModel(): string {
-    return 'test-model';
+    return 'default-test-model';
   }
   
-  // Method to expose protected createError method for testing
   public exposeCreateError(
-    code: 'RATE_LIMIT' | 'AUTH' | 'CONTENT' | 'CAPABILITY' | 'TIMEOUT' | 'UNKNOWN',
+    code: AIModelError['code'],
     detail?: string,
     status?: number,
     retryable = true
-  ): AIModelResult {
-    return this.createError(code, detail, status, retryable);
+  ): AIModelError {
+    return this.createError(code, detail || 'Test error detail', status, retryable);
   }
   
-  // Helper method to access protected methods (not in the interface)
-  protected standardizeError(error: Error): AIModelResult {
+  protected standardizeError(error: Error): AIModelError {
+    console.log(`[TestProvider.standardizeError] Standardizing error: ${error.name}, message: ${error.message}`);
     if (error.name === 'RateLimitError') {
-      return this.createError('RATE_LIMIT', error.message, undefined, true);
-    } else if (error.name === 'AuthenticationError') {
-      return this.createError('AUTH', error.message, undefined, false);
-    } else if (error.name === 'ContentPolicyError') {
-      return this.createError('CONTENT', error.message, undefined, false);
-    } else if (error.name === 'TimeoutError') {
-      return this.createError('TIMEOUT', error.message, undefined, true);
-    } else {
-      return this.createError('UNKNOWN', error.message, undefined, false);
+      return this.createError('RATE_LIMIT', error.message, 429, true);
     }
+    if (error.name === 'AuthenticationError') {
+      return this.createError('AUTH', error.message, 401, false);
+    }
+    if (error.name === 'ContentPolicyError') {
+      return this.createError('CONTENT', error.message, 400, false);
+    }
+    if (error.name === 'TimeoutError') {
+      return this.createError('TIMEOUT', error.message, 504, true);
+    }
+    return this.createError('UNKNOWN', error.message || 'Unknown test error', undefined, false);
   }
   
-  // Helper method to construct success responses
   protected constructSuccessResponse(
     text: string, 
     tokens: { prompt: number; completion: number; total: number },
@@ -82,29 +101,23 @@ class TestProvider extends BaseAIModelProvider {
     };
   }
   
-  // Required abstract method implementations
-  protected async callProviderAPI(request: AIModelRequest): Promise<AIModelResult> {
-    return this.constructSuccessResponse(
-      'Test response',
-      { prompt: 5, completion: 10, total: 15 },
-      'test-provider',
-      request.preferredModel || this.getDefaultModel()
-    );
-  }
-  
   getModelCapabilities(modelName: string): ModelCapabilities {
+    if (!modelName) {
+        console.warn("[TestProvider.getModelCapabilities] modelName is undefined, returning empty capabilities.");
+        return {} as ModelCapabilities;
+    }
     return {
       reasoning: 3,
       creativity: 3,
       coding: 3,
-      retrieval: false,
+      retrieval: modelName.includes('retrieval'),
       functionCalling: modelName.includes('function'),
       contextSize: 4096,
       streamingSupport: true
     };
   }
   
-  getProviderHealth(): ProviderHealthStatus {
+  async getProviderHealth(): Promise<ProviderHealthStatus> {
     return {
       available: true,
       errorRate: 0,
@@ -271,7 +284,7 @@ describe('BaseAIModelProvider', () => {
       
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.text).toBe('Test response');
+        expect(result.text).toBe('Mocked response from _generateResponse for default-test-model');
         expect(result.tokens.total).toBe(15);
       }
     });
@@ -309,14 +322,13 @@ describe('BaseAIModelProvider', () => {
   });
   
   describe('Capability checking', () => {
-    test('should check if it can fulfill a request based on capabilities', () => {
-      // Request without specific capability requirements
+    test('should check if it can fulfill a request based on capabilities', async () => {
       const basicRequest: AIModelRequest = {
         prompt: 'Hello, world!',
         context: mockContext
       };
       
-      expect(provider.canFulfill(basicRequest)).toBe(true);
+      expect(await provider.canFulfill(basicRequest)).toBe(true);
       
       // Request with capability that's not supported
       const unsupportedRequest: AIModelRequest = {
@@ -325,7 +337,7 @@ describe('BaseAIModelProvider', () => {
         context: mockContext
       };
       
-      expect(provider.canFulfill(unsupportedRequest)).toBe(false);
+      expect(await provider.canFulfill(unsupportedRequest)).toBe(false);
       
       // Request with function calling for a model that supports it
       const functionRequest: AIModelRequest = {
@@ -335,7 +347,7 @@ describe('BaseAIModelProvider', () => {
         context: mockContext
       };
       
-      expect(provider.canFulfill(functionRequest)).toBe(true);
+      expect(await provider.canFulfill(functionRequest)).toBe(true);
       
       // Request with function calling for a model that doesn't support it
       const incompatibleRequest: AIModelRequest = {
@@ -345,7 +357,7 @@ describe('BaseAIModelProvider', () => {
         context: mockContext
       };
       
-      expect(provider.canFulfill(incompatibleRequest)).toBe(false);
+      expect(await provider.canFulfill(incompatibleRequest)).toBe(false);
     });
   });
 }); 

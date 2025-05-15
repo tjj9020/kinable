@@ -116,7 +116,7 @@ export interface IAIModelProvider {
    * @param request The request to check
    * @returns Whether this provider supports all required capabilities
    */
-  canFulfill(request: AIModelRequest): boolean;
+  canFulfill(request: AIModelRequest): Promise<boolean>;
   
   /**
    * Get detailed capabilities for a specific model
@@ -129,7 +129,7 @@ export interface IAIModelProvider {
    * Get current health status of this provider
    * @returns Health metrics and availability
    */
-  getProviderHealth(): ProviderHealthStatus;
+  getProviderHealth(): Promise<ProviderHealthStatus>;
   
   /**
    * Get rate limits for this provider

@@ -1,6 +1,6 @@
 import { OpenAIModelProvider } from './OpenAIModelProvider';
 import { AIModelRequest } from '../../../../packages/common-types/src/ai-interfaces';
-import { RequestContext } from '../../../../packages/common-types/src/core-interfaces';
+import { RequestContext, IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
 import { GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
 import { OpenAI } from 'openai';
 // Removed all jest.mock('openai', ...) and related MockOpenAI, MockAPIError definitions
@@ -30,6 +30,18 @@ const mockContext: RequestContext = {
 
 const MOCK_SECRET_ID = 'test-openai-secret';
 const MOCK_AWS_REGION = 'us-test-1';
+const MOCK_DEFAULT_MODEL = 'gpt-3.5-turbo';
+
+// Mock Database Provider
+const mockDbProvider: IDatabaseProvider = {
+  getItem: jest.fn(),
+  putItem: jest.fn(),
+  updateItem: jest.fn(),
+  deleteItem: jest.fn(),
+  query: jest.fn(),
+  // ensureRegionalKeyPrefix: jest.fn(key => key), // REMOVED
+  // isRegionPrefixed: jest.fn().mockReturnValue(false) // REMOVED
+};
 
 describe('OpenAIModelProvider', () => {
   let provider: OpenAIModelProvider;
@@ -58,8 +70,15 @@ describe('OpenAIModelProvider', () => {
   // --- Tests for when OpenAI client IS INJECTED ---
   describe('with injected OpenAI client', () => {
     beforeEach(() => {
-      // Instantiate provider with the mock client
-      provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockOpenAIClient as any); 
+      provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockDbProvider, MOCK_DEFAULT_MODEL, mockOpenAIClient as any);
+      jest.spyOn(provider as any, '_getCircuitState').mockImplementation(async (...args: any[]) => {
+        const region = args[0] as string;
+        if (region === mockContext.region) { // us-east-2
+          return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${mockContext.region}` };
+        }
+        return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${region}` };
+      });
+      jest.spyOn(provider as any, '_updateCircuitState').mockResolvedValue(undefined);
     });
 
     test('should use injected client to generate response', async () => {
@@ -91,29 +110,14 @@ describe('OpenAIModelProvider', () => {
 
     test('should handle API errors from injected client', async () => {
       const mockRequest: AIModelRequest = { prompt: 'Hello', context: mockContext };
-      // Simulate an API error from the OpenAI SDK (structure might vary, this is a simplified mock)
-      const apiError = new Error("Mock OpenAI API Error");
-      // @ts-expect-error we are skipping this test
-      apiError.status = 400; 
-      // @ts-expect-error we are skipping this test
-      apiError.code = 'invalid_request_error';
+      const apiError = new OpenAI.APIError(401, { message: 'Mock OpenAI API Error', type: 'auth_error' }, 'Auth Error', {});
       mockOpenAIClient.chat.completions.create.mockRejectedValue(apiError);
       
-      // Need to mock OpenAI.APIError for instanceof check if we were still mocking the module
-      // Since we inject the client, we can rely on the structure of the error passed,
-      // or make the error handling in the provider more resilient to different error shapes if needed.
-      // For now, let's assume the provider's existing instanceof check OpenAI.APIError won't match
-      // and it will fall into a generic error, or we adjust the error to match if provider expects real APIError.
-      // The refactored provider uses `error instanceof OpenAI.APIError`. This will fail with a generic Error.
-      // To make this test pass as is, we'd need the mock to throw an error that actually IS an instance of OpenAI.APIError
-      // OR we adjust the test to throw a generic error and check how THAT is handled.
-      // For simplicity with injected client, we are testing the path where the error is generic.
-
       const result = await provider.generateResponse(mockRequest);
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.code).toBe('UNKNOWN'); // Or a more specific code if the provider can map it
+        expect(result.code).toBe('AUTH');
         expect(result.detail).toContain('Mock OpenAI API Error');
       }
     });
@@ -123,7 +127,13 @@ describe('OpenAIModelProvider', () => {
         chat: { completions: { create: jest.fn() } },
       } as unknown as OpenAI;
 
-      const provider = new OpenAIModelProvider('test-secret', 'test-region', mockOpenAIClient);
+      const provider = new OpenAIModelProvider(
+        'test-secret', 
+        'test-region', 
+        mockDbProvider,
+        MOCK_DEFAULT_MODEL,
+        mockOpenAIClient
+      );
       
       const testLimits = { rpm: 1, tpm: 10 };
       jest.spyOn(provider, 'getProviderLimits').mockReturnValue(testLimits);
@@ -279,181 +289,156 @@ describe('OpenAIModelProvider', () => {
 
   });
 
-  // --- Tests for when OpenAI client IS NOT INJECTED (existing key fetching logic) ---
+  // --- Tests for when OpenAI client IS NOT INJECTED (fetches keys) ---
   describe('without injected OpenAI client (fetches keys)', () => {
     beforeEach(() => {
-      // Instantiate provider WITHOUT the mock client, forcing key fetch
-      provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION);
+      provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockDbProvider, MOCK_DEFAULT_MODEL);
+      globalMockSecretsManagerSend.mockReset();
+      jest.spyOn(provider as any, '_getCircuitState').mockImplementation(async (...args: any[]) => {
+        const region = args[0] as string;
+        if (region === mockContext.region) { // us-east-2
+          return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${mockContext.region}` };
+        }
+        return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${region}` };
+      });
+      jest.spyOn(provider as any, '_updateCircuitState').mockResolvedValue(undefined);
     });
 
-    test('should successfully fetch API keys and generate response', async () => {
+    test('should fetch API keys and generate response', async () => {
       globalMockSecretsManagerSend.mockResolvedValueOnce({
-        SecretString: JSON.stringify({ current: 'test-api-key' }),
+        SecretString: '{"current":"test-api-key"}',
       } as GetSecretValueCommandOutput);
 
       const mockApiResponse = {
-        choices: [{ message: { content: 'Success!' }, finish_reason: 'stop' }],
+        choices: [{ message: { content: 'Success after key fetch!' }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
-        model: 'gpt-3.5-turbo-test',
+        model: MOCK_DEFAULT_MODEL,
       };
-      // Since the real OpenAI client is created internally, we can't directly mock its `create` method here
-      // without re-introducing jest.mock('openai').
-      // This test now becomes more of an integration test for the key-loading and internal client instantiation.
-      // To truly unit test generateResponse in this path, the internal `this.openaiClient.chat.completions.create`
-      // would need to be spied upon *after* _ensureApiKeysLoaded completes.
-      // For now, this test will verify key loading and that no immediate error occurs.
-      // We can't easily verify the *content* of the AI response without mocking the actual 'openai' module.
-      // This highlights the benefit of always injecting for full testability.
-      
-      // Let's assume for this specific test that if keys load, and no error is thrown by generateResponse
-      // that the internal client was created. This is a weaker test.
-      // A better approach would be to spy on `new OpenAI()` if that were possible without module-level mocks.
 
-      // To make this testable without module mock, we'd need to spy on the prototype of OpenAI, which is complex.
-      // Given the "no 3rd party module mocks" rule, this test will be limited.
-      // We expect SecretsManager to be called.
-      
-      // If we can't mock `openai.chat.completions.create` here, the call will try to make a real API call if not careful.
-      // The `_ensureApiKeysLoaded` creates `this.openaiClient = new OpenAI(...)`.
-      // The test will fail if it tries a real HTTP call.
-      // This path is now inherently difficult to unit test fully without `jest.mock('openai')`.
-      
-      // We can test that _ensureApiKeysLoaded was successful by checking a subsequent call
-      // that doesn't rely on the *response* from OpenAI but on the *fact* that the client was set up.
-      
-      // For this test, we'll mock the actual `this.openaiClient.chat.completions.create` AFTER key loading.
-      // This is a bit of a hack but adheres to "no jest.mock('openai')"
-      
-      const internalCreateMock = jest.fn().mockResolvedValue(mockApiResponse);
-      let _tempClientHolder: any;
+      // Call _ensureApiKeysLoaded to trigger key fetching and client initialization
+      await (provider as any)['_ensureApiKeysLoaded']();
 
-      globalMockSecretsManagerSend.mockImplementation(async () => {
-        // Simulate the provider fetching keys
-        await new Promise(resolve => setTimeout(resolve, 0)); // allow microtasks
-        // At this point, the real provider would have called `new OpenAI()`
-        // We need to replace its `chat.completions.create`
-        // This requires access to the instance `provider.openaiClient`
-        // which is set up *inside* _ensureApiKeysLoaded.
-        
-        // This direct assignment is tricky because _ensureApiKeysLoaded is async.
-        // We'll spy on the prototype as a more robust, albeit advanced, way if this fails.
-        // For now, assume _ensureApiKeysLoaded finishes before generateResponse uses the client.
-        
-        // Instead of the above, let's spy on what the real constructor would do if keys loaded.
-        // This is still problematic.
-
-        // The most straightforward way to test THIS path given the constraints is to
-        // accept that generateResponse will try to use the real SDK, and we can't intercept easily
-        // *after* new OpenAI() is called internally without module mocks.
-        
-        // Let's just test key loading itself.
-        return { SecretString: JSON.stringify({ current: 'test-api-key' }) };
-      });
-
-      // This will call _ensureApiKeysLoaded internally
-      // We can't easily mock the 'create' call on the internally created client.
-      // So, we just expect it not to throw an AUTH error.
-      // And expect secrets manager to have been called.
-      
-      // This test is now primarily about key loading.
-      // To test generateResponse fully, the client *must* be injected.
-      
-      // Prime the key loader
-      await provider['_ensureApiKeysLoaded'](); // Call private method for testing setup
-      
-      // Now that keys are loaded and openaiClient is set, we can mock its method for this test
-      if (provider['openaiClient']) {
-        provider['openaiClient'].chat = { completions: { create: internalCreateMock } } as any;
-      } else {
-        throw new Error("Test setup error: openaiClient not initialized after _ensureApiKeysLoaded");
+      // Now that the internal client should be initialized, mock its create method
+      if (!provider['openaiClient']) {
+        throw new Error('Test setup error: openaiClient not initialized after _ensureApiKeysLoaded');
       }
+      const internalCreateMock = jest.fn().mockResolvedValue(mockApiResponse);
+      provider['openaiClient'].chat.completions.create = internalCreateMock;
 
-      const result = await provider.generateResponse({ prompt: 'Test', context: mockContext });
+      const mockRequest: AIModelRequest = { prompt: 'Hello', context: mockContext };
+      const result = await provider.generateResponse(mockRequest);
 
       expect(globalMockSecretsManagerSend).toHaveBeenCalledTimes(1);
-      expect(internalCreateMock).toHaveBeenCalledTimes(1);
+      expect(internalCreateMock).toHaveBeenCalledTimes(1); // Check if the mocked internal client method was called
       expect(result.ok).toBe(true);
-      if(result.ok) expect(result.text).toBe('Success!');
-    });
-
-    test('should return AUTH error if API key fetch fails', async () => {
-      globalMockSecretsManagerSend.mockRejectedValue(new Error('Secrets Manager Error'));
-      const result = await provider.generateResponse({ prompt: 'Test', context: mockContext });
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
-        expect(result.code).toBe('AUTH');
-        expect(result.detail).toContain('Failed to load API credentials: Failed to load API keys from Secrets Manager: Secrets Manager Error');
+      if (result.ok) {
+        expect(result.text).toBe('Success after key fetch!');
       }
     });
 
-    test('should return AUTH error if secret string is malformed', async () => {
+    test('should handle Secrets Manager error when fetching keys', async () => {
+      globalMockSecretsManagerSend.mockRejectedValueOnce(new Error('Secrets Manager Error'));
+      const mockRequest: AIModelRequest = { prompt: 'Error test', context: mockContext };
+      const result = await provider.generateResponse(mockRequest);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('AUTH'); // Changed from UNKNOWN, as key loading failure is an AUTH class error
+        expect(result.detail).toMatch(/Failed to load API credentials: Failed to load API keys from Secrets Manager: Secrets Manager Error/);
+      }
+    });
+
+    test('should handle malformed secret string from Secrets Manager', async () => {
       globalMockSecretsManagerSend.mockResolvedValueOnce({
-        SecretString: 'not-json',
+        SecretString: 'not-a-valid-json',
       } as GetSecretValueCommandOutput);
-      const result = await provider.generateResponse({ prompt: 'Test', context: mockContext });
+      const mockRequest: AIModelRequest = { prompt: 'Malformed secret', context: mockContext };
+      const result = await provider.generateResponse(mockRequest);
+
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.code).toBe('AUTH');
-        expect(result.detail).toMatch(/Failed to load API credentials: Failed to load API keys from Secrets Manager: Unexpected token/);
+        expect(result.code).toBe('AUTH'); // Changed from UNKNOWN
+        expect(result.detail).toMatch(/Failed to load API credentials: Failed to load API keys from Secrets Manager: Unexpected token 'o', "not-a-valid-json" is not valid JSON/i);
       }
     });
 
-    test('should return AUTH error if secret JSON is missing "current" key', async () => {
+    test('should handle secret string without "current" key', async () => {
       globalMockSecretsManagerSend.mockResolvedValueOnce({
-        SecretString: JSON.stringify({ previous: 'old-key' }),
+        SecretString: '{"previous":"old-key-only"}',
       } as GetSecretValueCommandOutput);
-      const result = await provider.generateResponse({ prompt: 'Test', context: mockContext });
+      const mockRequest: AIModelRequest = { prompt: 'Missing current key', context: mockContext };
+      const result = await provider.generateResponse(mockRequest);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('AUTH'); // Changed from UNKNOWN
+        expect(result.detail).toMatch(/Failed to load API credentials: Failed to load API keys from Secrets Manager: Fetched secret does not contain a "current" API key/);
+      }
+    });
+    
+    test('should handle undefined SecretString from Secrets Manager', async () => {
+      globalMockSecretsManagerSend.mockResolvedValueOnce({
+        SecretBinary: Buffer.from("some data"), 
+        $metadata: {} // Added to satisfy GetSecretValueCommandOutput type
+      } as GetSecretValueCommandOutput);
+      const mockRequest: AIModelRequest = { prompt: 'Undefined SecretString', context: mockContext };
+      const result = await provider.generateResponse(mockRequest);
+
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.code).toBe('AUTH');
-        expect(result.detail).toContain('Failed to load API credentials: Failed to load API keys from Secrets Manager: Fetched secret does not contain a "current" API key.');
+        expect(result.detail).toMatch(/Failed to load API credentials: Failed to load API keys from Secrets Manager: SecretString is empty or not found in Secrets Manager response./i);
       }
     });
 
-    // Add a test for the retry logic (this will be an integration-style test for this part)
-    test('should retry with previous key if current key fails with 401, then succeed', async () => {
-        // Setup SecretsManager to provide current and previous keys
-        globalMockSecretsManagerSend.mockResolvedValueOnce({
-            SecretString: JSON.stringify({ current: 'failed-current-key', previous: 'working-previous-key' }),
-        } as GetSecretValueCommandOutput);
-
-        // This is tricky. The internal OpenAI client will be created.
-        // The first call to its 'create' should fail with 401.
-        // The second call (after re-init with previous key) should succeed.
-        // This requires conditional mocking on the *instance* of the OpenAI client,
-        // which is created internally. This is the limit of testing without module mocks or more complex spies.
-
-        // For this test, we can't easily mock the two different outcomes of openai.chat.completions.create
-        // on the internally managed client.
-        // This test will be SKIPPED as it's too complex to set up without deeper SDK mocking or prototype spying.
-        console.warn("Skipping test 'should retry with previous key...' as it's too complex without module-level OpenAI SDK mocking.");
+    // Test for 'should retry with previous key...' is complex and was previously skipped.
+    // Keeping it skipped or refactoring it requires deeper OpenAI SDK client mocking strategy.
+    test.skip('should retry with previous key if current key fails and previous key exists (COMPLEX TEST - SKIPPED)', async () => {
+      // This test is more involved as it requires:
+      // 1. Mocking SecretsManager to return current and previous keys.
+      // 2. Mocking the first OpenAI API call (with current key) to fail with an auth error.
+      // 3. Mocking the second OpenAI API call (with previous key) to succeed.
+      // This requires a more sophisticated mock of the internally created OpenAI client.
+      console.warn("Skipping test 'should retry with previous key...' as it's too complex without module-level OpenAI SDK mocking.");
     });
-
-
   });
 
   // Other tests from the original file (e.g., canFulfill, estimateTokens, getModelCapabilities)
   // These typically don't involve the OpenAI client instance directly, or use it in simple ways.
   describe('general provider methods', () => {
     beforeEach(() => {
-      // For these tests, it might not matter if client is injected or not,
-      // but let's use the non-injected version for consistency with how they were likely written.
-      provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION);
-      // It's fine if keys aren't loaded for methods that don't make API calls.
+      provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockDbProvider, MOCK_DEFAULT_MODEL, mockOpenAIClient as any);
+      globalMockSecretsManagerSend.mockReset(); // Add reset here too for consistency if canFulfill invokes key loading
+      jest.spyOn(provider as any, '_getCircuitState').mockImplementation(async (...args: any[]) => {
+        const region = args[0] as string;
+        if (region === mockContext.region) { // us-east-2
+          return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${mockContext.region}` };
+        }
+        return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${region}` };
+      });
+      jest.spyOn(provider as any, '_updateCircuitState').mockResolvedValue(undefined);
     });
 
-    test('canFulfill should return true for valid model and no specific capabilities', () => {
+    test('canFulfill should return true for valid model and no specific capabilities', async () => {
       const request: AIModelRequest = { context: mockContext, prompt: '', preferredModel: 'gpt-3.5-turbo' };
-      expect(provider.canFulfill(request)).toBe(true);
+      // Ensure API keys are loaded successfully for this test if provider tries to load them
+      globalMockSecretsManagerSend.mockResolvedValueOnce({
+        SecretString: '{"current":"test-api-key"}',
+      } as GetSecretValueCommandOutput);
+      expect(await provider.canFulfill(request)).toBe(true);
     });
 
-    test('canFulfill should return false for unsupported model', () => {
+    test('canFulfill should return false for unsupported model', async () => {
       const request: AIModelRequest = { context: mockContext, prompt: '', preferredModel: 'unsupported-model' };
+      // Ensure API keys are loaded successfully for this test if provider tries to load them
+      // globalMockSecretsManagerSend.mockResolvedValueOnce({
+      //   SecretString: '{"current":"test-api-key"}',
+      // } as GetSecretValueCommandOutput);
+      const capabilities = provider.getModelCapabilities(request.preferredModel || '');
       // --- DEBUG LOG ---
-      const capabilities = provider.getModelCapabilities('unsupported-model');
       console.log('[TEST DEBUG] OpenAIModelProvider.test.ts - canFulfill - capabilities for unsupported-model:', capabilities);
       // --- END DEBUG LOG ---
-      expect(provider.canFulfill(request)).toBe(false);
+      expect(await provider.canFulfill(request)).toBe(false);
     });
 
     test('getModelCapabilities should return defined capabilities for known models', () => {

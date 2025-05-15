@@ -45,14 +45,12 @@ export class ConfigurationService {
   }
   
   /**
-   * Get the singleton instance - REMOVED for now, instantiate directly
+   * Get the underlying IDatabaseProvider instance.
+   * @returns The IDatabaseProvider instance used by this service.
    */
-  // public static getInstance(): ConfigurationService {
-  //   if (!ConfigurationService.instance) {
-  //     ConfigurationService.instance = new ConfigurationService();
-  //   }
-  //   return ConfigurationService.instance;
-  // }
+  public getDBProvider(): IDatabaseProvider {
+    return this.dbProvider;
+  }
   
   /**
    * Get the current configuration

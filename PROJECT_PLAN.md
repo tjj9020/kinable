@@ -9,8 +9,9 @@
     *   This allows for easier testing (using mocks/stubs for interfaces) and flexibility in swapping out underlying services. Business logic will only interact with these defined interfaces.
     *   Testing approach: When testing components that use these interfaces, we inject mock implementations that return predictable responses, allowing us to test business logic in isolation without dependencies on external services.
 
-2.  **SOLID Design Principles**:
+2.  **SOLID Design Principles & Clean Architecture**:
     *   We adhere strictly to SOLID principles (Single Responsibility, Open/Closed, Liskov Substitution, Interface Segregation, Dependency Inversion) in all code design and implementation.
+    *   **Clean/Hexagonal Architecture**: Each service should ideally be structured to separate domain logic from infrastructure concerns. This typically involves organizing code into layers such as `domain/`, `application/` (or `use-case/`), `adapters/` (for incoming ports like API handlers and outgoing ports like database clients), and `infrastructure/`. Handlers (e.g., Lambda handlers) should be kept thin, delegating business logic to application services/use cases. This enhances testability, maintainability, and the ability to swap dependencies.
     *   Single Responsibility: Each class or module has only one reason to change (e.g., `CognitoAuthProvider` only handles Cognito-specific authentication logic).
     *   Open/Closed: Code should be open for extension but closed for modification (we extend through new interface implementations rather than modifying existing ones).
     *   Liskov Substitution: Objects should be replaceable with instances of their subtypes without altering program correctness (all implementations of interfaces must satisfy the interface contract).
@@ -26,6 +27,10 @@
 
 4.  **Scoped Changes & Discussion**:
     *   We avoid large, repository-wide sweeping changes without prior discussion and agreement. Changes are typically scoped to the current component or service being developed.
+    *   **Architecture Decision Records (ADRs)**: For significant architectural decisions (e.g., choosing a primary data store, selecting a messaging system, deciding on a specific AI provider integration strategy, structuring moderation flows, defining token accounting mechanisms), we will create Architecture Decision Records.
+        *   *What*: A short document (typically markdown) capturing the context, decision, and consequences of an important architectural choice.
+        *   *Why*: To capture the rationale behind decisions, reduce future debate, enable team alignment, onboard new members, and support compliance/audit trails.
+        *   *How*: ADRs will be stored in a designated `/docs/adr/` folder using a simple template (e.g., `001-example-decision.md`).
 
 5.  **Frequent Commits**:
     *   We commit our code frequently. A commit is made when:
@@ -34,7 +39,7 @@
         *   A defined sub-task within a "Step" of a "Phase" is functionally complete and tested.
     *   Commit messages should be clear and reference the specific Phase and Step (e.g., "Feat(Phase1.2): Implement JWT parsing in Lambda Authorizer").
 
-6.  **Multi-Region Readiness**:
+6.  **Multi-Region Readiness & Data Management**:
     *   While initially deploying to a single region, we design all resources to be multi-region ready from the start.
     *   We follow region-aware naming conventions: `<env>-<region>-<service>-<purpose>`.
     *   We parameterize all region-specific resource identifiers (no hardcoding).
@@ -43,8 +48,34 @@
         *   All data operations (reads and especially writes) adhere to **write-locality**: operations for a given user/family occur in their designated "home region" (derived from `custom:region` JWT claim). This prevents cross-region write conflicts and simplifies data consistency.
         *   Our Infrastructure as Code (IaC) approach using SAM for table definitions ensures consistent schemas and keys across regions. This facilitates new region deployments and is a prerequisite for potential future use of DynamoDB Global Tables.
         *   If considering DynamoDB Global Tables in the future, data types will be assessed for replication safety (e.g., eventually consistent chat logs vs. strongly consistent counters which require careful design for active-active replication).
+        *   **Partition Key Checklist**: Before creating any new DynamoDB table, a review based on a standard checklist (e.g., documented in `/docs/ddb-key-review.md`) must be conducted. This checklist will validate key cardinality, read/write patterns, potential for hot keys, and suitability for expected query patterns.
+        *   **Global Table Promotion Plan**: A documented plan outlining criteria and procedures for promoting regional DynamoDB tables to Global Tables will be maintained (e.g., in an ADR or infra README). This ensures a smooth transition if and when true global replication is required.
     *   All authorization and data operations remain region-local by default.
     *   Interfaces should be designed to accommodate region-specific implementations or configurations.
+
+7.  **Modular Service Structure**:
+    *   **Monorepo Organization**: The monorepo should be organized into modular service packages (e.g., under a `/services/` directory like `/services/chat`, `/services/moderation`, or within `apps/` if appropriate). Each service package should ideally have its own local build, test configuration, and clear dependency boundaries, managed via PNPM workspaces.
+    *   *Why*: This improves build performance, isolates domain logic, reduces coupling, and clarifies ownership.
+
+8.  **Testing Standards & Contract Enforcement**:
+    *   **Unit Tests**: As currently defined.
+    *   **Integration Tests**: As currently defined.
+    *   **End-to-End (E2E) Tests**: As currently defined.
+    *   **Contract Tests**: For shared APIs, interfaces, and Data Transfer Objects (DTOs) (especially those in `packages/common-types/`), contract tests should be implemented.
+        *   *What*: Tests that verify the "contract" (e.g., method signatures, data structures, expected behavior) of a shared component from the perspective of its consumer.
+        *   *Why*: To prevent silent breaking changes between services or between shared packages and their consumers, ensuring backward compatibility.
+        *   *How*: Tools like `jest-extended` for validating object schemas, `ts-interface-checker`, or provider/consumer-driven contract testing frameworks (e.g., Pact) can be considered.
+
+9.  **Infrastructure as Code (IaC) Strategy & Governance**:
+    *   **Tooling**: We will primarily use AWS SAM for simpler Lambda-based services. For more complex infrastructure, workflows involving multiple AWS services (e.g., Step Functions, Global Tables configurations, complex networking), or where higher-level abstractions are beneficial, AWS CDK (Cloud Development Kit) will be used. This allows us to leverage SAM's speed for common Lambda patterns and CDK's type safety and composability for more intricate setups (e.g., an `infra/chat-cdk/` for a complex chat workflow or `infra/core-sam/` for basic API services).
+    *   **IaC Governance**: To maintain security, best practices, and cost-effectiveness in our IaC:
+        *   `cdk-nag`: For CDK-based infrastructure, `cdk-nag` will be used to check stacks against best practice rules (e.g., from AWS Solutions Architect Framework).
+        *   `cfn-guard` (or `cfn-lint`): For SAM/CloudFormation templates, `cfn-guard` or `cfn-lint` will be used to validate templates against policy-as-code rules and AWS best practices.
+        *   *Why*: To prevent common misconfigurations (e.g., public S3 buckets, overly permissive IAM roles, missing encryption or logging).
+        *   *How*: These tools will be installed as dev dependencies and integrated into CI/CD pipelines to fail builds on critical violations.
+
+10. **Compliance and Privacy by Design**:
+    *   **Compliance Backlog**: A compliance backlog will be maintained (e.g., in `PROJECT_PLAN.md` or a separate `COMPLIANCE.md` document) to track requirements related to regulations like COPPA, GDPR, and aspirations for SOC2. This includes defining data deletion flows, data retention policies, access logging, and mapping features to compliance controls. Phase targets will be assigned to these items.
 
 ## Mock vs. Production Implementation Requirements
 
@@ -55,7 +86,8 @@ To ensure we maintain a clear distinction between mock implementations used for 
    * **Completion Requirements**: Before any step is considered complete, all mock implementations must be replaced with real service integrations.
 
 2. **Mock Implementation Guidelines**:
-   * All mock implementations must be clearly marked with comments (e.g., `// MOCK: This is a temporary mock implementation`).
+   * All mock implementations must be clearly marked with comments (e.g., `// MOCK: This is a temporary mock implementation for <Reason>. Ticket: <IssueID>`).
+   * **Tracking Mocks**: In addition to comments, a corresponding GitHub issue (or similar tracking mechanism) should be created and tagged (e.g., `needs-prod-impl`, `tech-debt`) for each mock implementation. This ensures visibility and facilitates prioritization of replacing mocks. Automated linting or CI checks can be configured to warn about `// MOCK:` annotations without a linked issue.
    * Mock implementations should closely simulate the behavior of real services, including error conditions.
    * Mock implementations may be used for initial development, unit testing, and interface validation.
 
@@ -99,7 +131,8 @@ This section clarifies that the goal is not just functional implementations with
         *   Confirm `pnpm install`, `pnpm build`, `pnpm test`, `pnpm lint` commands are working.
         *   Create a new application package directory under `apps/` for our main API (e.g., `apps/chat-api-service`).
         *   Create a new shared package under `packages/` for common types (e.g., `packages/kinable-types`) if not already present. Define initial shared interfaces here (e.g., `IUserIdentity`, `IApiResponse`).
-    *   **Definition of Done**: Core build/lint/test commands execute successfully. New service/package directories are created. Initial shared types/interfaces defined.
+        *   **CI/CD Foundation**: Establish standard CI/CD pipeline templates (e.g., using GitHub Actions). For each service, this template should include steps for: build, lint, unit tests, IaC validation (see IaC Governance), deployment to a test environment, and basic smoke tests. Example: `.github/workflows/deploy-chat-api-service.yml`.
+    *   **Definition of Done**: Core build/lint/test commands execute successfully. New service/package directories are created. Initial shared types/interfaces defined. Basic CI template available.
     *   **Commit Point**: After setup and initial package creation.
 
 *   **Step 0.2: AWS `kinable-dev` Profile & "Hello World" SAM Deployment [COMPLETED]**
@@ -117,6 +150,16 @@ This section clarifies that the goal is not just functional implementations with
         *   Parameterize any region-specific configurations.
     *   **Definition of Done**: The "Hello World" Lambda is deployed, unit tests pass, and its API Gateway endpoint returns a successful response.
     *   **Commit Point**: After successful deployment and testing.
+
+*   **Step 0.3: Establish Foundational Development Artifacts [COMPLETED]**
+    *   **Goal**: Create initial documents and test configurations to support core development principles.
+    *   **Tasks**:
+        *   Created `docs/adr/` directory for Architecture Decision Records. [COMPLETED]
+        *   Created `docs/ddb-key-review.md` with an initial checklist for DynamoDB partition key design. [COMPLETED]
+        *   Implemented a basic contract test for `IUserIdentity` in `packages/common-types/src/core-interfaces.contract.test.ts`. [COMPLETED]
+        *   Updated Jest configuration in `packages/common-types/jest.config.js` to include `*.contract.test.ts` files for discovery. [COMPLETED]
+    *   **Definition of Done**: Essential documentation folders and initial examples/configurations for ADRs, DynamoDB reviews, and contract testing are in place.
+    *   **Commit Point**: After creation of foundational artifacts.
 
 ---
 
@@ -162,7 +205,7 @@ This section clarifies that the goal is not just functional implementations with
         *   In `packages/common-types/` (plan mentions `kinable-types`, verify actual package name), define: [COMPLETED and VERIFIED]
             *   `IDatabaseProvider` interface (as updated to accept `keyAttributeName`, `logicalId`, `userRegion`).
             *   Interfaces for `FamilyData` (`familyId`, `tokenBalance`, `pauseStatusFamily`) and `ProfileData` (`profileId`, `familyId`, `role`, `pauseStatusProfile`).
-        *   Define two DynamoDB tables in `sam.yaml`: `FamiliesTable`, `ProfilesTable` with initial attributes. [COMPLETED and VERIFIED]
+        *   Define two DynamoDB tables in `sam.yaml`: `FamiliesTable`, `ProfilesTable` with initial attributes. Apply the **Partition Key Checklist** and **Global Table Promotion Plan** principles here. [COMPLETED and VERIFIED]
             *   Enable DynamoDB Streams for both tables (`StreamSpecification` with `StreamViewType: NEW_AND_OLD_IMAGES`) as a prerequisite for Global Table configuration. [COMPLETED and VERIFIED]
             *   The primary region for initial deployment and writes will be `us-east-2`. [COMPLETED and VERIFIED]
         *   Deploy SAM changes (for the `us-east-2` region initially). [COMPLETED and VERIFIED]
@@ -230,6 +273,8 @@ This section clarifies that the goal is not just functional implementations with
                 * Provider metadata: `provider.name`, `provider.model`, `provider.features`
                 * Performance: `latency`, `timestamp`, `region`
             *   `BaseAIModelProvider` abstract class with shared functionality [COMPLETED - Refined canFulfill and rate limiting]
+                *   **Shared Policy/Retry Logic**: Implement common logic for retries (with exponential backoff) and error normalization within `BaseAIModelProvider` or a dedicated shared utility package. This avoids duplicating fragile retry logic in each concrete provider.
+                *   **Prompt Optimization**: Include mechanisms for prompt compression (e.g., stripping extraneous formatting) and dynamically setting appropriate `maxTokens` based on the task or model to optimize token usage.
             *   `OpenAIModelProvider` concrete implementation (initial provider). [COMPLETED - Uses real OpenAI SDK internally if no client injected, robust error handling, and rate limiting]
             *   `ConfigurationService` for managing provider configurations. [COMPLETED - Uses real DynamoDB for fetching and caching configurations]
             *   **COMPLETED**: `OpenAIModelProvider` uses the actual OpenAI SDK for its internal client when one is not injected.
@@ -279,17 +324,22 @@ This section clarifies that the goal is not just functional implementations with
             *   Adapt Anthropic's API to match our standardized interface [COMPLETED]
             *   Add appropriate error handling and retry logic [COMPLETED - Basic error mapping implemented]
             *   Unit tests for `AnthropicModelProvider` (key loading, response generation, error handling, conversation history) [COMPLETED - All tests passing]
+            *   **Property-Based Fuzz Testing**: For `IAIModelProvider` implementations (and other critical shared interfaces), use property-based fuzz testing (e.g., with `fast-check`) in `*.contract.test.ts` files to validate correct contract implementation across a wide variety of inputs and edge cases.
         *   Enhance the `AIModelRouter` with:
             *   **Circuit Breaker Pattern**:
                 * Track error rates and latency per provider
                 * Temporarily disable providers exceeding error thresholds
                 * Implement exponential backoff for recovery
-                * Store circuit state in DynamoDB for persistence across invocations
+                * Store circuit state in DynamoDB for persistence across invocations.
+                    *   **Persistent State**: Create a `ProviderHealthTable` in DynamoDB. Store `OPEN`/`CLOSED` state per provider/region with a TTL to automatically expire stale entries and allow recovery. This ensures state survives Lambda cold starts and avoids permanently blocking traffic to a provider that has recovered.
             *   **Smart Routing System**:
                 * Cost-based routing using request complexity estimation
+                    *   **Tiered Model Routing**: Implement logic to route simpler prompts to more cost-effective models (e.g., GPT-3.5-Turbo, Claude Haiku) and complex or critical prompts to higher-capability models (e.g., GPT-4o, Claude Opus). This can involve scoring task complexity or using heuristics.
                 * Capability-based provider selection
                 * Regional availability and performance-based routing
                 * Fallback chains with configurable priorities
+                * **Semantic Response Cache**: Implement a caching layer (e.g., using Redis, DynamoDB with a suitable vector search like pgvector or Pinecone if semantic similarity is needed) for AI responses to common or identical prompts (e.g., cache by `hash(prompt + profileAge + modelConfiguration)`). This can significantly reduce token usage and latency for repeated queries.
+                * **Scaling High-Demand Models**: For models with restrictive rate limits (e.g., GPT-4o initially), consider deploying multiple independent endpoints/projects for that model provider. The `AIModelRouter` can then distribute requests across these instances (round-robin, regionally, or based on load) to effectively increase the available request per minute (RPM) / tokens per minute (TPM). This might be a more cost-effective initial scaling step before larger quota increases are granted.
         *   Update the configuration schema to support:
             *   Provider prioritization rules
             *   Capability mapping for models
@@ -345,10 +395,12 @@ This section clarifies that the goal is not just functional implementations with
             *   `OpenAIModerationProvider` implementation using OpenAI's moderation API
             *   `CustomRulesModerationProvider` for family-specific rules
             *   `CompositeModerationProvider` to combine multiple providers
+            *   **Local Pre-Screening**: Implement lightweight, local checks (e.g., using regex, simple NLP libraries, or compact ML models) for common profanity or obvious PII before calling external moderation APIs. This can reduce costs and latency for clear-cut cases.
         *   Define `ModerationLogTable` in DynamoDB (global table ready):
             *   Schema with `recordId`, `familyId`, `profileId`, `timestamp`, `type`, `region`
             *   GSI on `familyId` and `timestamp` for efficient queries
             *   TTL field for automatic data expiration
+            *   **Stream to Event Bus**: Stream moderation log events (and potentially token ledger events from Phase 3) to Amazon Kinesis Data Streams or Amazon EventBridge. This decouples log processing and enables future use cases like real-time analytics, ML model training feedstock, or archiving to S3 via Kinesis Data Firehose.
         *   Write moderation handler code (`src/handlers/moderationEngine.ts`):
             *   Initialize appropriate moderation providers
             *   Apply age-appropriate filtering rules based on profile age
@@ -421,6 +473,7 @@ This section clarifies that the goal is not just functional implementations with
             *   Configure JSON-formatted logs with consistent fields
             *   Include request IDs, user IDs, region information, and timing data
             *   Log appropriate request/response data (respecting privacy)
+            *   **AWS Lambda Powertools**: Adopt AWS Lambda Powertools for TypeScript (`@aws-lambda-powertools/logger`, `@aws-lambda-powertools/metrics`, `@aws-lambda-powertools/tracer`) to standardize structured logging, custom metric emission (e.g., to CloudWatch Embedded Metric Format - EMF), and distributed tracing with AWS X-Ray.
         *   Create CloudWatch dashboards:
             *   API latency by endpoint, provider, and region
             *   Error rates by type, provider, and region
@@ -437,6 +490,8 @@ This section clarifies that the goal is not just functional implementations with
             *   Measure token efficiency
             *   Monitor cold start frequencies
             *   Compare provider performance across regions
+            *   **Performance Budgets**: Define and enforce performance budgets (e.g., in a `perf-budget.yml` or similar config file per service). These should specify acceptable cold-start times, P50/P90/P95 latencies, and memory usage per Lambda function or critical flow. Integrate automated performance testing (e.g., using k6, Artillery) into CI/CD pipelines to fail builds that violate these budgets.
+            *   **Latency Budgets for Core Flows**: Establish explicit end-to-end latency budgets for core user flows (e.g., moderation < 100ms, chat response < 300ms for simple queries). Document these in `/docs/perf-budgets.md` and track them via CloudWatch dashboards or APM tools.
         *   Cost tracking:
             *   Tag all resources for detailed cost allocation
             *   Track per-provider API costs
@@ -447,6 +502,12 @@ This section clarifies that the goal is not just functional implementations with
             *   Implement automated testing of production endpoints
             *   Develop tools for managing provider API keys
             *   Build dashboards for monitoring multi-region performance
+            *   **Fault Injection GameDays**: Regularly conduct "GameDays" using AWS Fault Injection Simulator (FIS) or manual methods to simulate failures (e.g., provider API outages, Secrets Manager throttling, DynamoDB errors). This helps verify that circuit breakers, fallbacks, and retry mechanisms work as expected and improves overall system resilience.
+            *   **Proactive Quota Management**: After observing 3-5 days of sustained usage near existing quotas for third-party AI providers (OpenAI, Anthropic, etc.), proactively file support tickets to request quota increases. Provide usage charts and token logs as evidence to support the request.
+            *   **Compute Optimization**:
+                *   **Graviton2**: Migrate Lambda functions to Graviton2 (arm64) architecture where feasible for improved price-performance.
+                *   **Memory Tuning**: Use tools like AWS Lambda Power Tuning (e.g., via `aws-lambda-power-tuning` Step Functions state machine, run in CI or periodically) to find the optimal memory configuration for each Lambda function, balancing cost and performance.
+        *   **Distributed Tracing**: Ensure distributed tracing (e.g., via AWS X-Ray, enabled by Lambda Powertools Tracer) is implemented across all services involved in a request flow. Trace headers must be propagated between Lambdas, API Gateway, and other services to allow visualization of the entire request path and easy identification of bottlenecks.
     *   **Multi-Region Considerations**:
         *   Create both region-specific and global dashboards
         *   Implement cross-region performance comparison
@@ -650,6 +711,8 @@ export interface AIModelError {
         *   (Optional) Define `IBillingLogicProvider` if logic becomes complex (e.g., `calculateCost(promptTokens, completionTokens, model): number`). For now, direct logic is fine.
         *   Create `BillingLedgerFunction` Lambda in `sam.yaml`.
         *   Grant it read/write access to `FamiliesTable` (via `IDatabaseProvider`) and write access to `TokenLedgerTable` (defined in `sam.yaml`, schema per `TECH_ROADMAP.md`).
+            *   **TokenLedgerTable Configuration**: Ensure `TokenLedgerTable` has a TTL attribute defined for automatic expiration of old records to manage storage costs. Implement Kinesis Data Firehose archival to S3 (e.g., S3 Glacier) for long-term storage before records expire from DynamoDB.
+            *   **Stream to Event Bus**: Similar to moderation logs, stream token ledger events to Amazon Kinesis Data Streams or Amazon EventBridge to support future analytics, real-time dashboards, or fraud detection systems.
         *   Write handler code (`src/handlers/billingLedger.ts`):
             *   Accepts `familyId`, `profileId`, `promptTokens`, `completionTokens`.
             *   `tokensToDeduct = promptTokens + completionTokens`.
@@ -684,6 +747,7 @@ export interface AIModelError {
     *   **Tasks**:
         *   Create `apps/parent-dashboard/`. Scaffold React project (Vite/CRA with TypeScript).
         *   Setup basic routing. Configure build/lint/test scripts.
+        *   **Accessibility Standards**: From the outset, ensure the React application adheres to WCAG 2.2 guidelines (e.g., color contrast, keyboard navigation, semantic HTML, ARIA attributes where necessary). Use tools like `axe-core` and Lighthouse audits during development and in CI to enforce these standards.
     *   **Multi-Region Consideration**: Client-side configuration for API endpoints (if not using a global router) should be region-aware. Cognito integration must support regional user pools.
     *   **Definition of Done**: 
         * Basic React app runs locally, with build/test setup.
@@ -718,6 +782,7 @@ export interface AIModelError {
         *   Create a service/hook in React to call `/dashboard/profiles` with JWT.
         *   Display profiles in a component.
         *   Basic unit/integration tests for the React components.
+        *   **Accessibility Validation**: Continue to ensure all new components and views meet WCAG 2.2 standards.
     *   **Definition of Done**: 
         * Logged-in guardian sees family profiles in the React app.
         * Real Cognito authentication working, not mocked.
@@ -810,6 +875,7 @@ export interface AIModelError {
         *   Configure SES for sending email notifications, including verified sender identities and email templates.
         *   Integrate event publishing into relevant services (e.g., `BillingLedgerFunction` for token warnings, `ModerationEngine` Step Function for flags).
         *   Add notification preferences in the Parent Dashboard (e.g., opt-in/out for certain notification types).
+        *   **PWA Push Notifications**: For the Parent Dashboard (and potentially child interface if appropriate), implement PWA (Progressive Web App) push notifications as an alternative or supplement to SMS/email. Use VAPID protocol with a service worker, potentially leveraging SNS for fanning out messages to registered PWA endpoints. This can be more engaging and cost-effective for certain alerts like token status or moderation events.
     *   **Multi-Region Consideration**: SNS Topics and SES configurations are regional. Notifications should be triggered and sent from the user's primary region. Manage templates per region if they have regional content.
     *   **Definition of Done**: 
         * Users receive real notifications for configured events based on their preferences.
@@ -828,6 +894,7 @@ export interface AIModelError {
     *   **Tasks**:
         *   Implement Lambda handlers for critical Stripe webhooks (e.g., `checkout.session.completed`, `invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`).
         *   Secure webhook endpoints using Stripe signature verification.
+        *   **Idempotent Webhook Handling**: Ensure all Stripe webhook handlers are idempotent. This can be achieved by storing Stripe event IDs (or a derived transaction ID) in a temporary DynamoDB table (with a short TTL) and checking for an existing ID before processing an event, or using conditional writes to the primary data tables if applicable. This prevents duplicate processing if Stripe retries sending an event.
         *   Update `FamiliesTable` (e.g., `tokenBalance`, `subscriptionStatus`) and potentially a new `BillingEventsTable` based on Stripe events.
         *   Develop UI in Parent Dashboard for managing subscriptions (view, upgrade, cancel), viewing billing history, and purchasing booster packs.
     *   **Multi-Region Consideration**: Stripe is global, but webhook Lambda handlers are regional. DB updates must target regional tables. `BillingEventsTable` (if created) needs region-aware naming and partitioning strategy. Ensure idempotency in webhook handlers.

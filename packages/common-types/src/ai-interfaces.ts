@@ -88,6 +88,12 @@ export interface ModelCapabilities {
   functionCalling: boolean;
   contextSize: number;
   streamingSupport: boolean;
+  vision?: boolean;
+  toolUse?: boolean;
+  configurable?: boolean;
+  maxOutputTokens?: number;
+  inputCost?: number;
+  outputCost?: number;
 }
 
 export interface ProviderLimits {
@@ -165,9 +171,9 @@ export interface ProviderHealthState {
 
   /**
    * Number of successes recorded while in the HALF_OPEN state.
-   * Reset when transitioning out of HALF_OPEN.
+   * Reset when transitioning out of HALF_OPEN or into CLOSED.
    */
-  currentHalfOpenSuccesses?: number;
+  currentHalfOpenSuccesses: number;
 
   /**
    * Total number of failures recorded for this provider.
@@ -199,6 +205,23 @@ export interface ProviderHealthState {
    * Timestamp (Unix epoch milliseconds) of the last time the status field changed.
    */
   lastStateChangeTimestamp: number;
+
+  /**
+   * Latency of the last successful request in milliseconds.
+   */
+  lastLatencyMs?: number;
+
+  /**
+   * Cumulative sum of latencies for successful requests in milliseconds.
+   * Used with totalSuccesses to calculate average latency.
+   */
+  totalLatencyMs: number;
+
+  /**
+   * Average latency of successful requests in milliseconds.
+   * Can be calculated on write or derived on read.
+   */
+  avgLatencyMs?: number;
   
   /**
    * DynamoDB Time-to-Live attribute.

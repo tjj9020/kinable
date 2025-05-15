@@ -1,5 +1,5 @@
 import { OpenAIModelProvider } from './OpenAIModelProvider';
-import { AIModelRequest } from '../../../../packages/common-types/src/ai-interfaces';
+import { AIModelRequest, AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
 import { RequestContext, IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
 import { GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
 import { OpenAI } from 'openai';
@@ -71,14 +71,6 @@ describe('OpenAIModelProvider', () => {
   describe('with injected OpenAI client', () => {
     beforeEach(() => {
       provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockDbProvider, MOCK_DEFAULT_MODEL, mockOpenAIClient as any);
-      jest.spyOn(provider as any, '_getCircuitState').mockImplementation(async (...args: any[]) => {
-        const region = args[0] as string;
-        if (region === mockContext.region) { // us-east-2
-          return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${mockContext.region}` };
-        }
-        return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${region}` };
-      });
-      jest.spyOn(provider as any, '_updateCircuitState').mockResolvedValue(undefined);
     });
 
     test('should use injected client to generate response', async () => {
@@ -294,14 +286,6 @@ describe('OpenAIModelProvider', () => {
     beforeEach(() => {
       provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockDbProvider, MOCK_DEFAULT_MODEL);
       globalMockSecretsManagerSend.mockReset();
-      jest.spyOn(provider as any, '_getCircuitState').mockImplementation(async (...args: any[]) => {
-        const region = args[0] as string;
-        if (region === mockContext.region) { // us-east-2
-          return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${mockContext.region}` };
-        }
-        return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${region}` };
-      });
-      jest.spyOn(provider as any, '_updateCircuitState').mockResolvedValue(undefined);
     });
 
     test('should fetch API keys and generate response', async () => {
@@ -409,14 +393,6 @@ describe('OpenAIModelProvider', () => {
     beforeEach(() => {
       provider = new OpenAIModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockDbProvider, MOCK_DEFAULT_MODEL, mockOpenAIClient as any);
       globalMockSecretsManagerSend.mockReset(); // Add reset here too for consistency if canFulfill invokes key loading
-      jest.spyOn(provider as any, '_getCircuitState').mockImplementation(async (...args: any[]) => {
-        const region = args[0] as string;
-        if (region === mockContext.region) { // us-east-2
-          return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${mockContext.region}` };
-        }
-        return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `openai#${region}` };
-      });
-      jest.spyOn(provider as any, '_updateCircuitState').mockResolvedValue(undefined);
     });
 
     test('canFulfill should return true for valid model and no specific capabilities', async () => {

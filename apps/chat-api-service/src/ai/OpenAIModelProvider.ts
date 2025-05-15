@@ -44,30 +44,32 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
 
   private secretsManagerClient: SecretsManagerClient;
   private secretId: string;
-  private awsClientRegion: string;
+  private awsRegion: string;
   private keysLoaded: boolean = false;
   private keyFetchPromise: Promise<void> | null = null;
+  private dbProviderForConfig: IDatabaseProvider; // Keep for config, not for BaseAIModelProvider's circuit breaker
   
   /**
    * Create a new OpenAI provider.
    * API keys are fetched from AWS Secrets Manager on demand if no client is provided.
    * @param secretId The ID or ARN of the secret in AWS Secrets Manager.
-   * @param awsClientRegion The AWS region for the Secrets Manager client.
-   * @param dbProviderInstance An instance of IDatabaseProvider for circuit breaker state.
+   * @param awsRegion The AWS region for the Secrets Manager client.
+   * @param dbProvider This dbProvider is for config/secrets, not Base's (now removed) circuit breaker
    * @param defaultModel The default model identifier to use for this provider.
    * @param openAIClientInstance Optional pre-configured OpenAI client instance for testing or specific use cases.
    */
   constructor(
     secretId: string, 
-    awsClientRegion: string, 
-    dbProviderInstance: IDatabaseProvider, 
-    defaultModel: string,
+    awsRegion: string, 
+    dbProvider: IDatabaseProvider, // This dbProvider is for config/secrets, not Base's (now removed) circuit breaker
+    defaultModel: string = "gpt-4o", // Default to a known model
     openAIClientInstance?: OpenAI
   ) {
-    super('openai', defaultModel, dbProviderInstance);
+    super("openai", defaultModel /*, dbProvider -- REMOVED from super call */);
     this.secretId = secretId;
-    this.awsClientRegion = awsClientRegion;
-    this.secretsManagerClient = new SecretsManagerClient({ region: this.awsClientRegion });
+    this.awsRegion = awsRegion;
+    this.secretsManagerClient = new SecretsManagerClient({ region: this.awsRegion });
+    this.dbProviderForConfig = dbProvider; // Store for its own needs
 
     if (openAIClientInstance) {
       this.openaiClient = openAIClientInstance;

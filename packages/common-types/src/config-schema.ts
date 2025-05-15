@@ -116,4 +116,21 @@ export function validateConfiguration(config: ProviderConfiguration): string[] {
   });
   
   return errors;
+}
+
+export interface ModelSpecificConfig {
+  contextSize: number;
+  tokenCost?: number | { prompt: number; completion: number }; // Can be a single number (cost per 1M tokens) or detailed prompt/completion costs
+  streamingSupport?: boolean;
+  functionCalling?: boolean;
+  vision?: boolean;
+  capabilities?: string[]; // Custom capability tags
+  priority?: number; // Lower is higher priority
+  active?: boolean; // Whether this specific model is active
+  rolloutPercentage?: number; // For canary deployments (0-100)
+  maxOutputTokens?: number;
+}
+
+export interface ProviderLimits {
+  // ... existing code ...
 } 

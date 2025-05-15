@@ -43,8 +43,24 @@ export function standardizeError(error: any, providerName: string): AIModelError
     } else if (error.message && error.message.includes('moderation')) {
         standardized.code = 'CONTENT';
         standardized.retryable = false;
+    } else if (standardized.code === 'UNKNOWN') { // Fallback for generic OpenAI.APIError based on status
+        if (error.status === 401 || error.status === 403) {
+            standardized.code = 'AUTH';
+            standardized.retryable = false;
+        } else if (error.status === 429) {
+            standardized.code = 'RATE_LIMIT';
+            standardized.retryable = true;
+        } else if (error.status === 404) {
+            standardized.code = 'CAPABILITY';
+            standardized.retryable = false;
+        } else if (error.status === 409 || error.status === 422) {
+            standardized.code = 'CONTENT';
+            standardized.retryable = false;
+        } else if (error.status && error.status >= 500) { // Check error.status exists
+            standardized.code = 'TIMEOUT'; // Or PROVIDER_ISSUE
+            standardized.retryable = true;
+        }
     }
-    // Add more specific OpenAI error type checks if needed
   } else if (error.response && error.response.data && error.response.data.type === 'error') { // Anthropic specific errors
     const anthropicError = error.response.data.error;
     standardized.detail = anthropicError.message || 'Anthropic API error';

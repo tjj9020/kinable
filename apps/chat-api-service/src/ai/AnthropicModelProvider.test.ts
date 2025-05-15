@@ -1,8 +1,9 @@
 import { AnthropicModelProvider } from './AnthropicModelProvider';
-import { AIModelRequest, ChatMessage } from '../../../../packages/common-types/src/ai-interfaces';
+import { AIModelRequest, ChatMessage, AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
 import { RequestContext, IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
 import { GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic, { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
+import { ProviderConfig } from '../../../../packages/common-types/src/config-schema';
 
 // Mock @aws-sdk/client-secrets-manager
 const globalMockSecretsManagerSend = jest.fn();
@@ -14,6 +15,26 @@ jest.mock('@aws-sdk/client-secrets-manager', () => {
       send: globalMockSecretsManagerSend,
     })),
     GetSecretValueCommand: jest.fn((input) => ({ input })),
+  };
+});
+
+// Mock @anthropic-ai/sdk
+const mockAnthropicClientCreate = jest.fn();
+jest.mock('@anthropic-ai/sdk', () => {
+  const OriginalAnthropic = jest.requireActual('@anthropic-ai/sdk');
+  return {
+    ...OriginalAnthropic,
+    __esModule: true,
+    default: jest.fn().mockImplementation(() => ({
+      messages: {
+        create: mockAnthropicClientCreate,
+      },
+    })),
+    // Explicitly re-export APIError if it was part of the default export's namespace, 
+    // or ensure it's picked up by ...OriginalAnthropic if it's a named export.
+    // For safety, if APIError is a named export, it should be fine with ...OriginalAnthropic.
+    // If it's namespaced under the default export usually, this mock structure changes that.
+    // The direct import above (AnthropicAPIError) is the safer bet.
   };
 });
 
@@ -40,47 +61,65 @@ const mockDbProvider: IDatabaseProvider = {
   query: jest.fn(),
 };
 
+// Default mock provider config
+const mockProviderConfig: ProviderConfig = {
+  active: true,
+  defaultModel: MOCK_ANTHROPIC_DEFAULT_MODEL,
+  models: {
+    [MOCK_ANTHROPIC_DEFAULT_MODEL]: {
+      contextSize: 200000,
+      tokenCost: 0.25 / 1000000,
+      streamingSupport: true,
+      functionCalling: true,
+      priority: 1,
+      capabilities: [],
+      active: true,
+      rolloutPercentage: 100,
+    },
+    'claude-3-opus-20240229': {
+      contextSize: 200000,
+      tokenCost: 15 / 1000000,
+      streamingSupport: true,
+      functionCalling: true,
+      priority: 2,
+      capabilities: [],
+      active: true,
+      rolloutPercentage: 100,
+    }
+  },
+  rateLimits: { rpm: 100, tpm: 40000 },
+  keyVersion: 1,
+  endpoints: {
+    'default': { url: 'https://api.anthropic.com', region: 'global', priority: 1, active: true }
+  },
+  retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
+  apiVersion: '2023-06-01',
+  rolloutPercentage: 100,
+};
+
 describe('AnthropicModelProvider', () => {
   let provider: AnthropicModelProvider;
-  let mockAnthropicClient: {
-    messages: {
-      create: jest.Mock<Promise<any>, [Anthropic.Messages.MessageCreateParams]>;
-    };
-  };
 
   beforeEach(() => {
     jest.clearAllMocks();
     globalMockSecretsManagerSend.mockClear();
-
-    mockAnthropicClient = {
-      messages: {
-        create: jest.fn(),
-      },
-    };
+    mockAnthropicClientCreate.mockClear();
   });
 
-  // --- Tests for when Anthropic client IS INJECTED ---
-  describe('with injected Anthropic client', () => {
+  // --- Tests for when Anthropic client IS SUCCESSFULLY INITIALIZED INTERNALLY ---
+  describe('with successful internal client initialization', () => {
     beforeEach(() => {
+      globalMockSecretsManagerSend.mockResolvedValueOnce({
+        SecretString: JSON.stringify({ current: 'test-anthropic-api-key' }),
+      } as GetSecretValueCommandOutput);
+
       provider = new AnthropicModelProvider(
         MOCK_SECRET_ID, 
         MOCK_AWS_REGION, 
-        mockDbProvider, // Added
-        MOCK_ANTHROPIC_DEFAULT_MODEL, // Added
-        mockAnthropicClient as any
+        mockDbProvider,
+        MOCK_ANTHROPIC_DEFAULT_MODEL
       );
-      provider.setProviderConfig({
-        provider: 'anthropic',
-        active: true,
-        defaultModel: 'claude-3-haiku-20240307',
-        models: {
-          'claude-3-haiku-20240307': {
-            contextSize: 200000,
-            costs: { prompt: 0.25 / 1000000, completion: 1.25 / 1000000 },
-          }
-        },
-        rateLimits: { rpm: 100, tpm: 40000 }
-      } as any);
+      provider.setProviderConfig(mockProviderConfig);
     });
 
     test('should use injected client to generate response', async () => {
@@ -101,12 +140,12 @@ describe('AnthropicModelProvider', () => {
           server_tool_use: { web_search_requests: 0 },
         },
       };
-      mockAnthropicClient.messages.create.mockResolvedValue(mockApiResponse);
+      mockAnthropicClientCreate.mockResolvedValue(mockApiResponse);
 
       const result = await provider.generateResponse(mockRequest);
 
-      expect(mockAnthropicClient.messages.create).toHaveBeenCalledTimes(1);
-      expect(mockAnthropicClient.messages.create).toHaveBeenCalledWith({
+      expect(mockAnthropicClientCreate).toHaveBeenCalledTimes(1);
+      expect(mockAnthropicClientCreate).toHaveBeenCalledWith({
         model: 'claude-3-haiku-20240307',
         messages: [{ role: 'user', content: 'Hello Anthropic' }],
         max_tokens: expect.any(Number), // Anthropic SDK requires max_tokens
@@ -117,19 +156,20 @@ describe('AnthropicModelProvider', () => {
         expect(result.text).toBe('Hi there from Claude!');
         expect(result.tokens?.total).toBe(20); // 10 input + 10 output
       }
-      expect(globalMockSecretsManagerSend).not.toHaveBeenCalled();
+      expect(globalMockSecretsManagerSend).toHaveBeenCalledTimes(1);
     });
 
     test('should handle API errors from injected client', async () => {
       const mockRequest: AIModelRequest = { prompt: 'Test error', context: mockContext };
-      const apiError = new Anthropic.APIError(400, { error: { type: 'invalid_request_error', message: 'Mock Anthropic API Error' } }, 'Mock Anthropic API Error', undefined);
-      mockAnthropicClient.messages.create.mockRejectedValue(apiError);
+      // Use the directly imported AnthropicAPIError
+      const apiError = new AnthropicAPIError(400, { error: { type: 'invalid_request_error', message: 'Mock Anthropic API Error' } }, 'Mock Anthropic API Error', undefined);
+      mockAnthropicClientCreate.mockRejectedValue(apiError);
 
       const result = await provider.generateResponse(mockRequest);
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.code).toBe('CAPABILITY'); // Or other appropriate code based on error mapping
+        expect(result.code).toBe('UNKNOWN'); // Default fallback or specific mapping
         expect(result.detail).toContain('Mock Anthropic API Error');
       }
     });
@@ -138,7 +178,7 @@ describe('AnthropicModelProvider', () => {
       const testLimits = { rpm: 1, tpm: 10 };
       jest.spyOn(provider, 'getProviderLimits').mockReturnValue(testLimits);
       // @ts-expect-error - Accessing private member for test setup
-      provider.tokenBucket.tokens = testLimits.tpm;
+      provider.tokenBucket.tokens = 0; // Exhaust tokens to trigger rate limit
       // @ts-expect-error - Accessing private member for test setup
       provider.tokenBucket.lastRefill = Date.now();
 
@@ -152,7 +192,7 @@ describe('AnthropicModelProvider', () => {
       if(!result.ok) {
         expect(result.code).toBe('RATE_LIMIT');
       }
-      expect(mockAnthropicClient.messages.create).not.toHaveBeenCalled();
+      expect(mockAnthropicClientCreate).not.toHaveBeenCalled();
     });
 
     // --- CONVERSATION HISTORY TESTS ---
@@ -175,20 +215,26 @@ describe('AnthropicModelProvider', () => {
         usage: mockBaseUsage,
       };
 
+      beforeEach(() => {
+        globalMockSecretsManagerSend.mockResolvedValueOnce({
+            SecretString: JSON.stringify({ current: 'test-anthropic-api-key' }),
+        } as GetSecretValueCommandOutput);
+      });
+
       test('should handle empty conversationHistory (single prompt)', async () => {
         const mockRequest: AIModelRequest = {
           prompt: 'Current user prompt.',
           context: { ...mockContext, conversationHistory: [] },
           preferredModel: defaultModel
         };
-        mockAnthropicClient.messages.create.mockResolvedValue({
+        mockAnthropicClientCreate.mockResolvedValue({
           ...mockBaseApiResponse,
           content: [{ type: 'text', text: 'Response to current prompt.', citations: [] }],
         });
 
         await provider.generateResponse(mockRequest);
 
-        expect(mockAnthropicClient.messages.create).toHaveBeenCalledWith(
+        expect(mockAnthropicClientCreate).toHaveBeenCalledWith(
           expect.objectContaining({
             model: defaultModel,
             messages: [{ role: 'user', content: 'Current user prompt.' }],
@@ -209,14 +255,14 @@ describe('AnthropicModelProvider', () => {
           context: { ...mockContext, conversationHistory: history },
           preferredModel: defaultModel
         };
-        mockAnthropicClient.messages.create.mockResolvedValue({
+        mockAnthropicClientCreate.mockResolvedValue({
           ...mockBaseApiResponse,
           content: [{ type: 'text', text: 'Response to latest question.', citations: [] }],
         });
         
         await provider.generateResponse(mockRequest);
 
-        expect(mockAnthropicClient.messages.create).toHaveBeenCalledWith(
+        expect(mockAnthropicClientCreate).toHaveBeenCalledWith(
           expect.objectContaining({
             model: defaultModel,
             messages: [
@@ -242,14 +288,14 @@ describe('AnthropicModelProvider', () => {
           context: { ...mockContext, conversationHistory: history },
           preferredModel: defaultModel
         };
-         mockAnthropicClient.messages.create.mockResolvedValue({
+         mockAnthropicClientCreate.mockResolvedValue({
           ...mockBaseApiResponse,
           content: [{ type: 'text', text: 'Response to query with system prompt.', citations: [] }],
         });
 
         await provider.generateResponse(mockRequest);
 
-        expect(mockAnthropicClient.messages.create).toHaveBeenCalledWith(
+        expect(mockAnthropicClientCreate).toHaveBeenCalledWith(
           expect.objectContaining({
             model: defaultModel,
             messages: [
@@ -277,14 +323,14 @@ describe('AnthropicModelProvider', () => {
           context: { ...mockContext, conversationHistory: history },
           preferredModel: defaultModel
         };
-        mockAnthropicClient.messages.create.mockResolvedValue({
+        mockAnthropicClientCreate.mockResolvedValue({
           ...mockBaseApiResponse,
           content: [{ type: 'text', text: 'Final response.', citations: [] }],
         });
 
         await provider.generateResponse(mockRequest);
 
-        expect(mockAnthropicClient.messages.create).toHaveBeenCalledWith(
+        expect(mockAnthropicClientCreate).toHaveBeenCalledWith(
           expect.objectContaining({
             model: defaultModel,
             messages: [
@@ -315,7 +361,7 @@ describe('AnthropicModelProvider', () => {
             stop_sequence: null,
             usage: mockBaseUsage,
         };
-        mockAnthropicClient.messages.create.mockResolvedValue(mockAnthropicResponse);
+        mockAnthropicClientCreate.mockResolvedValue(mockAnthropicResponse);
 
         const result = await provider.generateResponse(mockRequest);
 
@@ -333,30 +379,11 @@ describe('AnthropicModelProvider', () => {
       provider = new AnthropicModelProvider(
         MOCK_SECRET_ID, 
         MOCK_AWS_REGION, 
-        mockDbProvider, // Added
-        MOCK_ANTHROPIC_DEFAULT_MODEL // Added
+        mockDbProvider,
+        MOCK_ANTHROPIC_DEFAULT_MODEL
       );
-      provider.setProviderConfig({
-        provider: 'anthropic',
-        active: true,
-        defaultModel: 'claude-3-haiku-20240307',
-        models: {
-          'claude-3-haiku-20240307': { contextSize: 200000, costs: { prompt: 0.25/1000000, completion: 1.25/1000000 }},
-          'claude-3-opus-20240229': { contextSize: 200000, costs: { prompt: 15/1000000, completion: 75/1000000 }},
-        },
-        rateLimits: { rpm: 1000, tpm: 400000 }
-      } as any);
+      provider.setProviderConfig(mockProviderConfig);
       globalMockSecretsManagerSend.mockReset(); // Reset mock for AWS SDK v3
-      // Mock circuit breaker calls for this suite. Note: Anthropic tests might use a different region in mockContext.
-      // This mock needs to be robust or specific to the region used in tests.
-      jest.spyOn(provider as any, '_getCircuitState').mockImplementation(async (...args: any[]) => {
-        const region = args[0] as string;
-        if (region === mockContext.region) {
-          return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `anthropic#${mockContext.region}` };
-        }
-        return { status: 'CLOSED', consecutiveFailures: 0, successesInHalfOpen: 0, lastStateChangeTimestamp: Date.now(), providerRegion: `anthropic#${region}` };
-      });
-      jest.spyOn(provider as any, '_updateCircuitState').mockResolvedValue(undefined);
     });
 
     test('should fetch API keys and generate response', async () => {
@@ -438,6 +465,51 @@ describe('AnthropicModelProvider', () => {
         expect(result.code).toBe('AUTH');
         expect(result.detail).toContain('[AnthropicModelProvider] Failed to initialize client or load API credentials: Failed to load API keys from Secrets Manager: SecretString is empty or not found in Secrets Manager response.');
       }
+    });
+  });
+
+  describe('general provider methods', () => {
+    beforeEach(() => {
+      provider = new AnthropicModelProvider(MOCK_SECRET_ID, MOCK_AWS_REGION, mockDbProvider, MOCK_ANTHROPIC_DEFAULT_MODEL);
+      provider.setProviderConfig(mockProviderConfig);
+    });
+
+    test('canFulfill should return true for valid model and no specific capabilities', async () => {
+      const request: AIModelRequest = { prompt: 'test', context: mockContext, preferredModel: 'claude-3-haiku-20240307' };
+      const result = await provider.canFulfill(request);
+      expect(result).toBe(true);
+    });
+
+    test('canFulfill should return false for unsupported model', async () => {
+      const request: AIModelRequest = { prompt: 'test', context: mockContext, preferredModel: 'unsupported-anthropic-model' };
+      const result = await provider.canFulfill(request);
+      expect(result).toBe(false);
+    });
+
+    test('getModelCapabilities should return defined capabilities for known models', () => {
+      const capabilitiesHaiku = provider.getModelCapabilities('claude-3-haiku-20240307');
+      expect(capabilitiesHaiku).toBeDefined();
+      if (capabilitiesHaiku) {
+        expect(capabilitiesHaiku.functionCalling).toBe(true);
+      }
+
+      const capabilitiesOpus = provider.getModelCapabilities('claude-3-opus-20240229');
+      expect(capabilitiesOpus).toBeDefined();
+      if (capabilitiesOpus) {
+        expect(capabilitiesOpus.functionCalling).toBe(true);
+      }
+    });
+
+    test('getProviderLimits should return limits from config', () => {
+      const limits = provider.getProviderLimits();
+      expect(limits.rpm).toBe(mockProviderConfig.rateLimits.rpm);
+      expect(limits.tpm).toBe(mockProviderConfig.rateLimits.tpm);
+    });
+
+    test('getProviderHealth should return current health status', async () => {
+      const health = await provider.getProviderHealth();
+      expect(health.available).toBe(true);
+      expect(health.errorRate).toBe(0);
     });
   });
 }); 

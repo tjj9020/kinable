@@ -68,9 +68,14 @@ export class CircuitBreakerManager {
             providerRegion,
             status: 'CLOSED',
             consecutiveFailures: 0,
+            currentHalfOpenSuccesses: 0, // Ensure initialized
             totalFailures: 0,
             totalSuccesses: 0,
             lastStateChangeTimestamp: now,
+            openedTimestamp: undefined, // Explicitly undefined
+            lastFailureTimestamp: undefined, // Explicitly undefined
+            totalLatencyMs: 0, // Initialize new field
+            // lastLatencyMs and avgLatencyMs will be undefined initially
             ttl: Math.floor(now / 1000) + this.recordTtlSeconds, // TTL is in seconds
         };
     }
@@ -103,8 +108,9 @@ export class CircuitBreakerManager {
     /**
      * Records a successful interaction with the provider and updates its health state.
      * @param providerRegion The composite key (e.g., "OpenAI#us-east-1").
+     * @param durationMs Optional duration of the successful request in milliseconds.
      */
-    public async recordSuccess(providerRegion: string): Promise<void> {
+    public async recordSuccess(providerRegion: string, durationMs?: number): Promise<void> {
         let healthState = await this.getProviderHealth(providerRegion);
         const now = Date.now();
 
@@ -114,6 +120,14 @@ export class CircuitBreakerManager {
 
         healthState.totalSuccesses += 1;
         healthState.lastStateChangeTimestamp = now; // Always update for activity tracking, even if status doesn't change
+
+        if (durationMs !== undefined) {
+            healthState.lastLatencyMs = durationMs;
+            healthState.totalLatencyMs = (healthState.totalLatencyMs || 0) + durationMs;
+            if (healthState.totalSuccesses > 0) {
+                healthState.avgLatencyMs = healthState.totalLatencyMs / healthState.totalSuccesses;
+            }
+        }
 
         switch (healthState.status) {
             case 'OPEN':
@@ -180,7 +194,7 @@ export class CircuitBreakerManager {
     }
 
     // Placeholder for recordFailure
-    public async recordFailure(providerRegion: string): Promise<void> {
+    public async recordFailure(providerRegion: string, durationMs?: number): Promise<void> {
         let healthState = await this.getProviderHealth(providerRegion);
         const now = Date.now();
 

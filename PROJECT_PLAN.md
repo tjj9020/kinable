@@ -323,50 +323,46 @@ This section clarifies that the goal is not just functional implementations with
     *   **Goal**: Extend the AI provider architecture to support a second provider (e.g., Anthropic Claude) with intelligent routing and failover capabilities.
     *   **Tasks**:
         *   Create a second provider implementation:
-            *   `AnthropicModelProvider` implementing `IAIModelProvider` [COMPLETED - Uses real Anthropic SDK, retrieves keys from Secrets Manager, handles conversation history, implements standardizeError]
+            *   `AnthropicModelProvider` implementing `IAIModelProvider` [COMPLETED - Uses real Anthropic SDK, retrieves keys from Secrets Manager, handles conversation history, implements standardizeError. `getModelCapabilities` updated to conform to interface.]
             *   Adapt Anthropic's API to match our standardized interface [COMPLETED]
             *   Add appropriate error handling and retry logic [COMPLETED - Basic error mapping and standardizeError implemented]
             *   Unit tests for `AnthropicModelProvider` (key loading, response generation, error handling, conversation history) [COMPLETED - All tests passing]
-            *   **Property-Based Fuzz Testing**: For `IAIModelProvider` implementations (and other critical shared interfaces), use property-based fuzz testing (e.g., with `fast-check`) in `*.contract.test.ts` files to validate correct contract implementation across a wide variety of inputs and edge cases.
+            *   **Property-Based Fuzz Testing**: For `IAIModelProvider` implementations (and other critical shared interfaces), use property-based fuzz testing (e.g., with `fast-check`) in `*.contract.test.ts` files to validate correct contract implementation across a wide variety of inputs and edge cases. [PENDING]
         *   Enhance the `AIModelRouter` with:
-            *   **Circuit Breaker Pattern**: [COMPLETED - CircuitBreakerManager implemented and integrated with AIModelRouter]
+            *   **Circuit Breaker Pattern**: [COMPLETED - CircuitBreakerManager implemented and integrated with AIModelRouter. Unit tests for router confirm circuit breaker interaction.]
                 *   Define `ProviderHealthState` interface in `common-types` for DynamoDB storage. [COMPLETED]
                 *   Track error rates and latency per provider [Partially addressed by `recordSuccess`/`recordFailure` - detailed tracking/querying TBD]
                 *   Temporarily disable providers exceeding error thresholds [COMPLETED - via isRequestAllowed logic]
                 *   Implement exponential backoff for recovery [COMPLETED - via cooldownPeriodMs in CircuitBreakerManager]
                 *   Store circuit state in DynamoDB for persistence across invocations. [COMPLETED - CircuitBreakerManager uses DynamoDB]
-            *   **Circuit Breaker Pattern**:
-                *   Define `ProviderHealthState` interface in `common-types` for DynamoDB storage. [NEWLY ADDED & COMPLETED]
-                *   Track error rates and latency per provider
-                *   Temporarily disable providers exceeding error thresholds
-                *   Implement exponential backoff for recovery
-                *   Store circuit state in DynamoDB for persistence across invocations.
-                    *   **Persistent State**: Create a `ProviderHealthTable` in DynamoDB. Store `OPEN`/`CLOSED` state per provider/region with a TTL to automatically expire stale entries and allow recovery. This ensures state survives Lambda cold starts and avoids permanently blocking traffic to a provider that has recovered.
-            *   **Smart Routing System**:
-                * Cost-based routing using request complexity estimation
-                    *   **Tiered Model Routing**: Implement logic to route simpler prompts to more cost-effective models (e.g., GPT-3.5-Turbo, Claude Haiku) and complex or critical prompts to higher-capability models (e.g., GPT-4o, Claude Opus). This can involve scoring task complexity or using heuristics.
-                * Capability-based provider selection
-                * Regional availability and performance-based routing
-                * Fallback chains with configurable priorities
-                * **Semantic Response Cache**: Implement a caching layer (e.g., using Redis, DynamoDB with a suitable vector search like pgvector or Pinecone if semantic similarity is needed) for AI responses to common or identical prompts (e.g., cache by `hash(prompt + profileAge + modelConfiguration)`). This can significantly reduce token usage and latency for repeated queries.
-                * **Scaling High-Demand Models**: For models with restrictive rate limits (e.g., GPT-4o initially), consider deploying multiple independent endpoints/projects for that model provider. The `AIModelRouter` can then distribute requests across these instances (round-robin, regionally, or based on load) to effectively increase the available request per minute (RPM) / tokens per minute (TPM). This might be a more cost-effective initial scaling step before larger quota increases are granted.
+            *   **Dynamic Provider Initialization**: `AIModelRouter` can dynamically initialize `OpenAIModelProvider` and `AnthropicModelProvider`, fetching their `secretId` and `defaultModel` from `ConfigurationService`. [COMPLETED]
+            *   **Basic Failover Logic**: If the initially chosen provider's circuit is open, `AIModelRouter` attempts a one-step fallback to an alternative active provider (e.g., OpenAI to Anthropic or vice-versa, or to a configured default). [COMPLETED & Unit Tested]
+            *   **Smart Routing System (Initial foundation laid, further enhancements pending)**:
+                * Cost-based routing using request complexity estimation [PENDING]
+                    *   **Tiered Model Routing**: Implement logic to route simpler prompts to more cost-effective models (e.g., GPT-3.5-Turbo, Claude Haiku) and complex or critical prompts to higher-capability models (e.g., GPT-4o, Claude Opus). This can involve scoring task complexity or using heuristics. [PENDING]
+                * Capability-based provider selection [PENDING - Basic `canFulfill` exists, advanced matching TBD]
+                * Regional availability and performance-based routing [PENDING]
+                * Fallback chains with configurable priorities [PENDING - Basic one-step fallback implemented]
+                * **Semantic Response Cache**: Implement a caching layer (e.g., using Redis, DynamoDB with a suitable vector search like pgvector or Pinecone if semantic similarity is needed) for AI responses to common or identical prompts (e.g., cache by `hash(prompt + profileAge + modelConfiguration)`). This can significantly reduce token usage and latency for repeated queries. [PENDING]
+                * **Scaling High-Demand Models**: For models with restrictive rate limits (e.g., GPT-4o initially), consider deploying multiple independent endpoints/projects for that model provider. The `AIModelRouter` can then distribute requests across these instances (round-robin, regionally, or based on load) to effectively increase the available request per minute (RPM) / tokens per minute (TPM). This might be a more cost-effective initial scaling step before larger quota increases are granted. [PENDING]
         *   Update the configuration schema to support:
-            *   Provider prioritization rules
-            *   Capability mapping for models
-            *   Cost thresholds for routing decisions
-            *   Health check parameters
+            *   Provider prioritization rules [PENDING]
+            *   Capability mapping for models [PENDING - Basic model capabilities exist, schema for detailed mapping TBD]
+            *   Cost thresholds for routing decisions [PENDING]
+            *   Health check parameters [PENDING]
+            *   (Ensure `secretId` and `defaultModel` are formally part of `ProviderConfig` type in `common-types/config-schema.ts`) [TODO - Currently handled with `as any` in router]
         *   Implement automated health checks:
-            *   CloudWatch scheduled Lambda to ping each provider
-            *   Status updates to DynamoDB configuration
-            *   Alerting via SNS for persistent provider issues
+            *   CloudWatch scheduled Lambda to ping each provider [PENDING]
+            *   Status updates to DynamoDB configuration [PENDING]
+            *   Alerting via SNS for persistent provider issues [PENDING]
         *   Add monitoring and logging enhancements:
-            *   Detailed metrics for each provider (success rate, latency, token usage)
-            *   Log provider selection decisions for auditing
-            *   Track cost efficiency of routing decisions
+            *   Detailed metrics for each provider (success rate, latency, token usage) [PENDING]
+            *   Log provider selection decisions for auditing [PENDING - Basic console logs exist, structured logging TBD]
+            *   Track cost efficiency of routing decisions [PENDING]
         *   Update unit and integration tests:
-            *   Test failover scenarios
-            *   Validate correct provider selection based on capabilities
-            *   Ensure consistent behavior during provider outages
+            *   Test failover scenarios [COMPLETED - Basic one-step fallback unit tested. More comprehensive integration tests PENDING]
+            *   Validate correct provider selection based on capabilities [PENDING for advanced capabilities]
+            *   Ensure consistent behavior during provider outages [PENDING for integration tests]
     *   **Multi-Region Considerations**:
         *   Ensure provider health status is tracked per region
         *   Implement region-specific fallback strategies

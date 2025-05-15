@@ -8,9 +8,12 @@ import {
   ProviderHealthStatus,
   AIModelError,
   ProviderLimits,
+  TokenUsage,
+  ChatMessage
 } from '../../../../packages/common-types/src/ai-interfaces';
 import { ProviderConfig } from '../../../../packages/common-types/src/config-schema';
 import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
+import { standardizeError as sharedStandardizeError } from './standardizeError';
 
 const ANTHROPIC_PROVIDER_ID = 'anthropic';
 
@@ -138,7 +141,7 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
     try {
       const messages: Anthropic.Messages.MessageParam[] = [];
       if (request.context.conversationHistory && request.context.conversationHistory.length > 0) {
-        request.context.conversationHistory.forEach(histMsg => {
+        request.context.conversationHistory.forEach((histMsg: ChatMessage) => {
           if (histMsg.role === 'user' || histMsg.role === 'assistant') {
             messages.push({ role: histMsg.role, content: histMsg.content });
           }
@@ -183,14 +186,16 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
         console.warn('[AnthropicModelProvider] Response contained content blocks, but no usable text was extracted.', response.content);
       }
 
+      const anthropicTokenUsage: TokenUsage = {
+        prompt: response.usage.input_tokens,
+        completion: response.usage.output_tokens,
+        total: response.usage.input_tokens + response.usage.output_tokens,
+      };
+
       return {
         ok: true,
         text: textResponse,
-        tokens: {
-          prompt: response.usage.input_tokens,
-          completion: response.usage.output_tokens,
-          total: response.usage.input_tokens + response.usage.output_tokens,
-        },
+        tokens: anthropicTokenUsage,
         meta: {
           provider: this.providerName,
           model: response.model || modelToUse,
@@ -239,69 +244,13 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
         }
         return this.createError(errorCode, `[AnthropicModelProvider] API Error: ${error.message}`, status, retryable);
       } else {
-        return this.createError('UNKNOWN', `[AnthropicModelProvider] Error generating response: ${error.message || 'Unknown internal error'}`, undefined, true);
+        return this.standardizeError(error);
       }
     }
   }
 
   protected standardizeError(error: any): AIModelError {
-    let errorCode: AIModelError['code'] = 'UNKNOWN';
-    let retryable = true;
-    let status: number | undefined = undefined;
-    let detail = `[${this.providerName}] Error: ${error.message || 'Unknown internal error'}`;
-
-    if (error instanceof Anthropic.APIError) {
-      status = error.status;
-      detail = `[${this.providerName}] API Error: ${error.message}`;
-
-      if (error instanceof Anthropic.RateLimitError) {
-        errorCode = 'RATE_LIMIT';
-      } else if (error instanceof Anthropic.AuthenticationError) {
-        errorCode = 'AUTH';
-        retryable = false;
-      } else if (error instanceof Anthropic.PermissionDeniedError) {
-        errorCode = 'AUTH';
-        retryable = false;
-      } else if (error instanceof Anthropic.NotFoundError) {
-        errorCode = 'CAPABILITY'; // Or UNKNOWN, depending on context. NotFound often means model not found.
-        retryable = false;
-      } else if (error instanceof Anthropic.ConflictError || error instanceof Anthropic.UnprocessableEntityError) {
-        errorCode = 'UNKNOWN'; // Could be CAPABILITY if it relates to invalid input for the model
-        retryable = false;
-      } else if (error instanceof Anthropic.InternalServerError) {
-        errorCode = 'UNKNOWN'; // Provider-side server error
-        retryable = true;
-      } else {
-        // Generic APIError classification based on status code
-        if (status && status >= 500) {
-          errorCode = 'UNKNOWN'; // Server-side error at Anthropic
-          retryable = true;
-        } else if (status && status === 429) {
-          errorCode = 'RATE_LIMIT';
-          retryable = true; // Anthropic SDK might not throw RateLimitError for all 429s
-        } else if (status && status === 401 || status === 403) {
-          errorCode = 'AUTH';
-          retryable = false;
-        } else if (status && status >= 400 && status < 500) {
-          errorCode = 'CAPABILITY'; // Likely bad request, invalid model, etc.
-          retryable = false;
-        } else {
-          // Default for unclassified APIError or non-HTTP errors from APIError constructor
-          errorCode = 'UNKNOWN';
-          retryable = false; 
-        }
-      }
-    } else if (error.name === 'TimeoutError' || (error.message && error.message.toLowerCase().includes('timeout'))) {
-        errorCode = 'TIMEOUT';
-        retryable = true;
-        detail = `[${this.providerName}] Request timed out: ${error.message}`;
-    } else {
-      // Non-Anthropic.APIError, could be network issue, programming error, etc.
-      // These are generally treated as unknown and potentially retryable by the circuit breaker
-      // unless specific checks are added (e.g., for network offline errors).
-      retryable = true; // Default to retryable for truly unknown errors passed to standardizeError
-    }
-    return this.createError(errorCode, detail, status, retryable);
+    return sharedStandardizeError(error, this.providerName);
   }
 
   public async canFulfill(request: AIModelRequest): Promise<boolean> {

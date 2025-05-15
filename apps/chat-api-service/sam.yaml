@@ -311,6 +311,7 @@ Resources:
                   - dynamodb:GetItem
                   - dynamodb:Query
                   - dynamodb:UpdateItem
+                  - dynamodb:PutItem
                 Resource:
                   - !GetAtt ProviderConfigTable.Arn
                   - !GetAtt ProviderHealthTable.Arn
@@ -341,14 +342,10 @@ Resources:
       Role: !GetAtt ChatRouterFunctionRole.Arn
       Environment:
         Variables:
-          PROVIDER_CONFIG_TABLE: !Ref ProviderConfigTable
+          PROVIDER_CONFIG_TABLE_NAME: !Ref ProviderConfigTable
           PROVIDER_HEALTH_TABLE: !Ref ProviderHealthTable
-          # Set environment variable to the NAME of the secret
-          # For a specific stack like 'kinable-dev' in 'us-east-2':
-          OPENAI_API_KEY_SECRET: !Sub "kinable-dev-${AWS::Region}-openai-api-key"
+          OPENAI_API_KEY_SECRET_ID: !Sub "kinable-dev-${AWS::Region}-openai-api-key"
           ACTIVE_CONFIG_ID: "E2E_TEST_CHAT_CONFIG_V1"
-          # Or, if you prefer to make it more dynamic with the current stack name:
-          # OPENAI_API_KEY_SECRET: !Sub "${AWS::StackName}-${AWS::Region}-openai-api-key"
       Events:
         ChatEvent:
           Type: HttpApi

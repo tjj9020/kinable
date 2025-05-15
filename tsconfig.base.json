@@ -19,7 +19,9 @@
     "baseUrl": ".",
     "paths": {
       "@kinable/*": ["packages/*/src"]
-    }
+    },
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   },
   "exclude": ["node_modules", ".turbo", "dist", ".aws-sam"]
 } 

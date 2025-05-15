@@ -1,197 +1,109 @@
 import { AIModelRouter } from './AIModelRouter';
 import { ConfigurationService } from './ConfigurationService';
 import { OpenAIModelProvider } from './OpenAIModelProvider';
+import { CircuitBreakerManager } from './CircuitBreakerManager';
 import { AIModelRequest, AIModelResult, IAIModelProvider, AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
+import { RequestContext } from '../../../../packages/common-types/src/core-interfaces';
 import { ProviderConfiguration } from '../../../../packages/common-types/src/config-schema';
-import { RequestContext, IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
+import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
 
-// Mock ConfigurationService to return a mock constructor
+// Mock ConfigurationService
 const mockGetConfiguration = jest.fn();
 const mockUpdateConfiguration = jest.fn();
 const mockGetDBProvider = jest.fn();
+jest.mock('./ConfigurationService', () => ({
+  ConfigurationService: jest.fn().mockImplementation(() => ({
+    getConfiguration: mockGetConfiguration,
+    updateConfiguration: mockUpdateConfiguration,
+    getDBProvider: mockGetDBProvider,
+  })),
+}));
 
-jest.mock('./ConfigurationService', () => {
-  return {
-    ConfigurationService: jest.fn().mockImplementation(() => {
-      return {
-        getConfiguration: mockGetConfiguration,
-        updateConfiguration: mockUpdateConfiguration,
-        getDBProvider: mockGetDBProvider,
-        // Add mocks for any other methods of ConfigurationService used by AIModelRouter if necessary
-      };
-    }),
-  };
-});
-
-// Mock OpenAIModelProvider (top-level)
+// Mock OpenAIModelProvider
 const MockedOpenAIModelProviderConstructor = jest.fn();
 const mockOpenAIGenerateResponse = jest.fn();
-const mockOpenAICanFulfill = jest.fn().mockReturnValue(true);
-const mockOpenAIGetModelCapabilities = jest.fn().mockReturnValue({}); // Add default mock
-const mockOpenAIGetProviderHealth = jest.fn().mockReturnValue({}); // Add default mock
-const mockOpenAIGetProviderLimits = jest.fn().mockReturnValue({}); // Add default mock
+const mockOpenAICanFulfill = jest.fn().mockResolvedValue(true); // Ensure it's async if original is
+jest.mock('./OpenAIModelProvider', () => ({
+  OpenAIModelProvider: jest.fn().mockImplementation((secretId, awsClientRegion, dbProvider, defaultModel) => {
+    MockedOpenAIModelProviderConstructor(secretId, awsClientRegion, dbProvider, defaultModel);
+    return {
+      generateResponse: mockOpenAIGenerateResponse,
+      canFulfill: mockOpenAICanFulfill,
+      // Ensure all IAIModelProvider methods are mocked if they might be called
+      getModelCapabilities: jest.fn().mockReturnValue({}), 
+      getProviderHealth: jest.fn().mockReturnValue({}), 
+      getProviderLimits: jest.fn().mockReturnValue({})
+    };
+  })
+}));
 
-jest.mock('./OpenAIModelProvider', () => {
-  return {
-    OpenAIModelProvider: jest.fn().mockImplementation((secretId, awsClientRegion, dbProvider, defaultModel) => {
-      MockedOpenAIModelProviderConstructor(secretId, awsClientRegion, dbProvider, defaultModel);
-      return {
-        generateResponse: mockOpenAIGenerateResponse,
-        canFulfill: mockOpenAICanFulfill,
-        getModelCapabilities: mockOpenAIGetModelCapabilities,
-        getProviderHealth: mockOpenAIGetProviderHealth,
-        getProviderLimits: mockOpenAIGetProviderLimits,
-      };
-    })
-  };
-});
+// Mock CircuitBreakerManager
+const mockIsRequestAllowed = jest.fn();
+const mockRecordSuccess = jest.fn();
+const mockRecordFailure = jest.fn();
+jest.mock('./CircuitBreakerManager', () => ({
+  CircuitBreakerManager: jest.fn().mockImplementation(() => ({
+    isRequestAllowed: mockIsRequestAllowed,
+    recordSuccess: mockRecordSuccess,
+    recordFailure: mockRecordFailure,
+  })),
+}));
 
-// Create a mock provider
-const createMockProvider = (name: string, canFulfill = true, shouldSucceed = true): IAIModelProvider => {
+
+const createMockProvider = (name: string, canFulfill = true, shouldSucceed = true, isRetryableError = false, errorCode: AIModelError['code'] = 'UNKNOWN'): IAIModelProvider => {
   return {
     generateResponse: jest.fn().mockImplementation(async (_request: AIModelRequest): Promise<AIModelResult> => {
       if (shouldSucceed) {
-        return {
-          ok: true,
-          text: `Response from ${name}`,
-          tokens: { prompt: 10, completion: 5, total: 15 },
-          meta: {
-            provider: name,
-            model: 'test-model',
-            features: [],
-            region: 'us-east-2',
-            latency: 100,
-            timestamp: Date.now()
-          }
-        };
+        return { ok: true, text: `Response from ${name}`, tokens: { prompt: 10, completion: 5, total: 15 }, meta: { provider: name, model: 'test-model', features: [], region: 'us-east-2', latency: 100, timestamp: Date.now() } };
       } else {
-        return {
-          ok: false,
-          code: 'UNKNOWN',
-          provider: name,
-          detail: 'Test error',
-          retryable: false
-        };
+        return { ok: false, code: errorCode, provider: name, detail: 'Test error', retryable: isRetryableError };
       }
     }),
-    canFulfill: jest.fn().mockReturnValue(canFulfill),
-    getModelCapabilities: jest.fn().mockReturnValue({
-      reasoning: 3,
-      creativity: 3,
-      coding: 3,
-      retrieval: false,
-      functionCalling: false,
-      contextSize: 4096,
-      streamingSupport: true
-    }),
-    getProviderHealth: jest.fn().mockReturnValue({
-      available: true,
-      errorRate: 0,
-      latencyP95: 200,
-      lastChecked: Date.now()
-    }),
-    getProviderLimits: jest.fn().mockReturnValue({
-      rpm: 20,
-      tpm: 80000
-    })
+    canFulfill: jest.fn().mockResolvedValue(canFulfill), // Ensure async if original is
+    getModelCapabilities: jest.fn().mockReturnValue({ reasoning: 3, creativity: 3, coding: 3, retrieval: false, functionCalling: false, contextSize: 4096, streamingSupport: true }),
+    getProviderHealth: jest.fn().mockReturnValue({ available: true, errorRate: 0, latencyP95: 200, lastChecked: Date.now() }),
+    getProviderLimits: jest.fn().mockReturnValue({ rpm: 20, tpm: 80000 })
   };
 };
 
-// Sample request context
-const mockContext: RequestContext = {
-  requestId: 'test-request-id',
-  jwtSub: 'test-user',
-  familyId: 'test-family',
-  profileId: 'test-profile',
-  region: 'us-east-2',
-  traceId: 'test-trace-id',
-};
+const mockContext: RequestContext = { requestId: 'test-request-id', jwtSub: 'test-user', familyId: 'test-family', profileId: 'test-profile', region: 'us-east-1', traceId: 'test-trace-id' }; // region is lambda region
 
 describe('AIModelRouter', () => {
   let router: AIModelRouter;
   let mockConfigServiceInstance: ConfigurationService;
   let mockGenericOpenAIProvider: IAIModelProvider;
   let mockDatabaseProvider: jest.Mocked<IDatabaseProvider>;
+  let mockCircuitBreakerManagerInstance: jest.Mocked<CircuitBreakerManager>; // Added
 
   const MOCK_OPENAI_SECRET_ID = 'mock-openai-secret-id';
-  const MOCK_AWS_CLIENT_REGION = 'us-west-2';
+  const MOCK_AWS_CLIENT_REGION = 'us-west-2'; // This is the region the router itself runs in
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockIsRequestAllowed.mockResolvedValue(true); // Default to allow requests
+    mockRecordSuccess.mockResolvedValue(undefined);
+    mockRecordFailure.mockResolvedValue(undefined);
 
     mockConfigServiceInstance = new (ConfigurationService as any)() as ConfigurationService;
-    
-    mockDatabaseProvider = {
-      getItem: jest.fn(),
-      putItem: jest.fn(),
-      updateItem: jest.fn(),
-      deleteItem: jest.fn(),
-      query: jest.fn(),
-    };
+    mockCircuitBreakerManagerInstance = new (CircuitBreakerManager as any)(
+        null, // Mocked DDB client - not used by mocked CBM
+        'mock-table' // Mocked table name - not used by mocked CBM
+    ) as jest.Mocked<CircuitBreakerManager>; 
+
+    mockDatabaseProvider = { getItem: jest.fn(), putItem: jest.fn(), updateItem: jest.fn(), deleteItem: jest.fn(), query: jest.fn() };
     mockGetDBProvider.mockReturnValue(mockDatabaseProvider);
 
     mockGetConfiguration.mockReset();
-    // Expanded mock ProviderConfiguration to satisfy the ProviderConfig interface more completely
     mockGetConfiguration.mockResolvedValue({
-      version: '1.0.0',
-      updatedAt: Date.now(),
-      providers: {
-        openai: {
-          active: true,
-          keyVersion: 1,
-          secretId: MOCK_OPENAI_SECRET_ID, 
-          endpoints: { // Added
-            default: {
-              url: 'https://api.openai.com/v1',
-              region: 'global',
-              priority: 1,
-              active: true,
-            }
-          },
-          models: { // Added
-            'gpt-3.5-turbo': {
-              tokenCost: 0.002,
-              priority: 1,
-              capabilities: ['general', 'chat'],
-              contextSize: 4096,
-              streamingSupport: true,
-              functionCalling: true,
-              active: true,
-              rolloutPercentage: 100,
-            },
-            'gpt-4': {
-              tokenCost: 0.03,
-              priority: 2,
-              capabilities: ['general', 'chat', 'reasoning', 'coding'],
-              contextSize: 8192,
-              streamingSupport: true,
-              functionCalling: true,
-              active: true,
-              rolloutPercentage: 100,
-            }
-          },
-          rateLimits: { rpm: 100, tpm: 100000 }, // Added
-          retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 }, // Added
-          apiVersion: 'v1', // Added
-          rolloutPercentage: 100, // Added
-        }
-      },
-      routing: {
-        rules: [],
-        weights: {
-          cost: 0.4,
-          quality: 0.3,
-          latency: 0.2,
-          availability: 0.1
-        },
-        defaultProvider: 'openai',
-        defaultModel: 'gpt-3.5-turbo'
-      },
+      version: '1.0.0', updatedAt: Date.now(),
+      providers: { openai: { active: true, keyVersion: 1, secretId: MOCK_OPENAI_SECRET_ID, endpoints: { default: { url: 'https://api.openai.com/v1', region: 'global', priority: 1, active: true } }, models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: ['general', 'chat'], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 } }, rateLimits: { rpm: 100, tpm: 100000 }, retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 }, apiVersion: 'v1', rolloutPercentage: 100 } },
+      routing: { rules: [], weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, defaultProvider: 'openai', defaultModel: 'gpt-3.5-turbo' },
       featureFlags: {}
     } as ProviderConfiguration);
     
     mockGenericOpenAIProvider = createMockProvider('openai');
     
+    // AIModelRouter constructor will now use the mocked CircuitBreakerManager due to jest.mock above
     router = new AIModelRouter(
       mockConfigServiceInstance, 
       MOCK_OPENAI_SECRET_ID,
@@ -202,52 +114,32 @@ describe('AIModelRouter', () => {
 
   test('should initialize correctly', () => {
     expect(router).toBeDefined();
-    // Configuration is now fetched inside the constructor to set up default provider if necessary
-    // or if the defaultProvider logic relies on it immediately.
-    // Depending on AIModelRouter's internal logic, getConfiguration might be called once or not at all here
-    // if initialProviders pre-populates the default.
-    // Let's check if it's called at least once if defaultProvider is openai and not in initialProviders.
-    // For this specific setup where initialProviders *does* include openai, it might not call getConfiguration for initialization.
-    // However, routeRequest will call it.
-    // The test below for routeRequest is a better place to check getConfiguration calls.
+    // Check if CircuitBreakerManager was instantiated (via its mock)
+    expect(CircuitBreakerManager).toHaveBeenCalledTimes(1);
   });
 
-  test('should route to the specified provider', async () => {
+  test('should route to the specified provider and call circuit breaker methods for success', async () => {
     const request: AIModelRequest = {
       prompt: 'Hello, world!',
       preferredProvider: 'openai',
-      context: mockContext
+      context: { ...mockContext, region: MOCK_AWS_CLIENT_REGION } // Ensure context.region is the provider call region
     };
-
-    (mockConfigServiceInstance.getConfiguration as jest.Mock).mockClear(); 
-    (mockConfigServiceInstance.getConfiguration as jest.Mock).mockResolvedValueOnce({
-      version: '1.0.0',
-      updatedAt: Date.now(),
-      providers: {
-        openai: {
-          active: true, keyVersion: 1, secretId: MOCK_OPENAI_SECRET_ID,
-          endpoints: { default: { url: 'https://api.openai.com/v1', region: 'global', priority: 1, active: true } },
-          models: { 'gpt-3.5-turbo': { tokenCost: 0.002, priority: 1, capabilities: [], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100 } },
-          rateLimits: { rpm: 100, tpm: 100000 }, 
-          retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
-          apiVersion: 'v1', 
-          rolloutPercentage: 100,
-        }
-      },
-      routing: { rules: [], weights: { cost: 0.4, quality: 0.3, latency: 0.2, availability: 0.1 }, defaultProvider: 'openai', defaultModel: 'gpt-3.5-turbo' },
-      featureFlags: {}
-    } as ProviderConfiguration);
+    // Reset for this specific test
+    mockIsRequestAllowed.mockClear().mockResolvedValue(true);
+    mockRecordSuccess.mockClear();
+    mockRecordFailure.mockClear();
 
     const result = await router.routeRequest(request);
     
-    expect(mockConfigServiceInstance.getConfiguration).toHaveBeenCalledTimes(1);
+    const expectedProviderKey = `openai#${MOCK_AWS_CLIENT_REGION}`;
+    expect(mockIsRequestAllowed).toHaveBeenCalledWith(expectedProviderKey);
     expect(mockGenericOpenAIProvider.canFulfill).toHaveBeenCalledWith(request);
     expect(mockGenericOpenAIProvider.generateResponse).toHaveBeenCalledWith(request);
+    expect(mockRecordSuccess).toHaveBeenCalledWith(expectedProviderKey);
+    expect(mockRecordFailure).not.toHaveBeenCalled();
     
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.text).toBe('Response from openai');
-    }
+    if (result.ok) expect(result.text).toBe('Response from openai');
   });
 
   test('should use default provider if none specified', async () => {
@@ -471,9 +363,9 @@ describe('AIModelRouter', () => {
       return {
         generateResponse: mockOpenAIGenerateResponse,
         canFulfill: mockOpenAICanFulfill,
-        getModelCapabilities: mockOpenAIGetModelCapabilities,
-        getProviderHealth: mockOpenAIGetProviderHealth,
-        getProviderLimits: mockOpenAIGetProviderLimits,
+        getModelCapabilities: jest.fn().mockReturnValue({}),
+        getProviderHealth: jest.fn().mockReturnValue({}),
+        getProviderLimits: jest.fn().mockReturnValue({}),
       } as unknown as OpenAIModelProvider; // Cast to satisfy the return type for the mock
     });
   });
@@ -572,5 +464,120 @@ describe('AIModelRouter', () => {
     if(result.ok){
       expect(result.text).toBe('Response from default (dynamically initialized openai)');
     }
+  });
+
+  test('should return 503 and not call provider if circuit breaker is OPEN (blocks request)', async () => {
+    const request: AIModelRequest = {
+      prompt: 'Test prompt',
+      preferredProvider: 'openai',
+      context: { ...mockContext, region: MOCK_AWS_CLIENT_REGION }
+    };
+    mockIsRequestAllowed.mockResolvedValue(false); // Circuit breaker blocks
+    // Ensure provider mocks are reset or not called
+    (mockGenericOpenAIProvider.generateResponse as jest.Mock).mockClear();
+    mockRecordSuccess.mockClear();
+    mockRecordFailure.mockClear();
+
+    const result = await router.routeRequest(request);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('TIMEOUT'); // Or our specific 'CIRCUIT_OPEN' if defined
+      expect(result.status).toBe(503);
+    }
+    expect(mockIsRequestAllowed).toHaveBeenCalledWith(`openai#${MOCK_AWS_CLIENT_REGION}`);
+    expect(mockGenericOpenAIProvider.generateResponse).not.toHaveBeenCalled();
+    expect(mockRecordSuccess).not.toHaveBeenCalled();
+    expect(mockRecordFailure).not.toHaveBeenCalled(); // Not called because provider was not even attempted
+  });
+
+  test('should call recordFailure for retryable provider errors', async () => {
+    const request: AIModelRequest = {
+      prompt: 'Test prompt',
+      preferredProvider: 'openai',
+      context: { ...mockContext, region: MOCK_AWS_CLIENT_REGION }
+    };
+    // Provider will return a retryable error
+    mockGenericOpenAIProvider = createMockProvider('openai', true, false, true, 'TIMEOUT');
+    router = new AIModelRouter(mockConfigServiceInstance, MOCK_OPENAI_SECRET_ID, MOCK_AWS_CLIENT_REGION, { openai: mockGenericOpenAIProvider });
+
+    mockIsRequestAllowed.mockResolvedValue(true);
+    mockRecordSuccess.mockClear();
+    mockRecordFailure.mockClear();
+
+    const result = await router.routeRequest(request);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('TIMEOUT');
+    
+    const expectedProviderKey = `openai#${MOCK_AWS_CLIENT_REGION}`;
+    expect(mockIsRequestAllowed).toHaveBeenCalledWith(expectedProviderKey);
+    expect(mockGenericOpenAIProvider.generateResponse).toHaveBeenCalledWith(request);
+    expect(mockRecordFailure).toHaveBeenCalledWith(expectedProviderKey);
+    expect(mockRecordSuccess).not.toHaveBeenCalled();
+  });
+
+  test('should NOT call recordFailure for non-retryable AUTH provider errors', async () => {
+    const request: AIModelRequest = {
+      prompt: 'Test prompt',
+      preferredProvider: 'openai',
+      context: { ...mockContext, region: MOCK_AWS_CLIENT_REGION }
+    };
+    mockGenericOpenAIProvider = createMockProvider('openai', true, false, false, 'AUTH'); // Non-retryable AUTH error
+    router = new AIModelRouter(mockConfigServiceInstance, MOCK_OPENAI_SECRET_ID, MOCK_AWS_CLIENT_REGION, { openai: mockGenericOpenAIProvider });
+
+    mockIsRequestAllowed.mockResolvedValue(true);
+    mockRecordFailure.mockClear();
+
+    const result = await router.routeRequest(request);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('AUTH');
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+  });
+
+  test('should NOT call recordFailure for non-retryable CONTENT provider errors', async () => {
+    const request: AIModelRequest = {
+      prompt: 'Test prompt',
+      preferredProvider: 'openai',
+      context: { ...mockContext, region: MOCK_AWS_CLIENT_REGION }
+    };
+    mockGenericOpenAIProvider = createMockProvider('openai', true, false, false, 'CONTENT'); // Non-retryable CONTENT error
+    router = new AIModelRouter(mockConfigServiceInstance, MOCK_OPENAI_SECRET_ID, MOCK_AWS_CLIENT_REGION, { openai: mockGenericOpenAIProvider });
+    
+    mockIsRequestAllowed.mockResolvedValue(true);
+    mockRecordFailure.mockClear();
+
+    const result = await router.routeRequest(request);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('CONTENT');
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+  });
+
+  test('should call recordFailure if provider.generateResponse throws an unhandled exception', async () => {
+    const request: AIModelRequest = {
+      prompt: 'Test prompt',
+      preferredProvider: 'openai',
+      context: { ...mockContext, region: MOCK_AWS_CLIENT_REGION }
+    };
+    const unhandledError = new Error("Unhandled provider explosion!");
+    (mockGenericOpenAIProvider.generateResponse as jest.Mock).mockRejectedValue(unhandledError);
+    router = new AIModelRouter(mockConfigServiceInstance, MOCK_OPENAI_SECRET_ID, MOCK_AWS_CLIENT_REGION, { openai: mockGenericOpenAIProvider });
+
+    mockIsRequestAllowed.mockResolvedValue(true);
+    mockRecordSuccess.mockClear();
+    mockRecordFailure.mockClear();
+
+    const result = await router.routeRequest(request);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+        expect(result.code).toBe('UNKNOWN');
+        expect(result.detail).toContain("Unhandled provider explosion!");
+    }
+    const expectedProviderKey = `openai#${MOCK_AWS_CLIENT_REGION}`;
+    expect(mockRecordFailure).toHaveBeenCalledWith(expectedProviderKey);
+    expect(mockRecordSuccess).not.toHaveBeenCalled();
   });
 }); 

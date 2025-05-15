@@ -329,11 +329,18 @@ This section clarifies that the goal is not just functional implementations with
             *   Unit tests for `AnthropicModelProvider` (key loading, response generation, error handling, conversation history) [COMPLETED - All tests passing]
             *   **Property-Based Fuzz Testing**: For `IAIModelProvider` implementations (and other critical shared interfaces), use property-based fuzz testing (e.g., with `fast-check`) in `*.contract.test.ts` files to validate correct contract implementation across a wide variety of inputs and edge cases.
         *   Enhance the `AIModelRouter` with:
+            *   **Circuit Breaker Pattern**: [COMPLETED - CircuitBreakerManager implemented and integrated with AIModelRouter]
+                *   Define `ProviderHealthState` interface in `common-types` for DynamoDB storage. [COMPLETED]
+                *   Track error rates and latency per provider [Partially addressed by `recordSuccess`/`recordFailure` - detailed tracking/querying TBD]
+                *   Temporarily disable providers exceeding error thresholds [COMPLETED - via isRequestAllowed logic]
+                *   Implement exponential backoff for recovery [COMPLETED - via cooldownPeriodMs in CircuitBreakerManager]
+                *   Store circuit state in DynamoDB for persistence across invocations. [COMPLETED - CircuitBreakerManager uses DynamoDB]
             *   **Circuit Breaker Pattern**:
-                * Track error rates and latency per provider
-                * Temporarily disable providers exceeding error thresholds
-                * Implement exponential backoff for recovery
-                * Store circuit state in DynamoDB for persistence across invocations.
+                *   Define `ProviderHealthState` interface in `common-types` for DynamoDB storage. [NEWLY ADDED & COMPLETED]
+                *   Track error rates and latency per provider
+                *   Temporarily disable providers exceeding error thresholds
+                *   Implement exponential backoff for recovery
+                *   Store circuit state in DynamoDB for persistence across invocations.
                     *   **Persistent State**: Create a `ProviderHealthTable` in DynamoDB. Store `OPEN`/`CLOSED` state per provider/region with a TTL to automatically expire stale entries and allow recovery. This ensures state survives Lambda cold starts and avoids permanently blocking traffic to a provider that has recovered.
             *   **Smart Routing System**:
                 * Cost-based routing using request complexity estimation

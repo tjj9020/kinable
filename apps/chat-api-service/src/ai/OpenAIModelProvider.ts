@@ -11,6 +11,7 @@ import {
 import OpenAI from 'openai';
 import { SecretsManagerClient, GetSecretValueCommand, GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
 import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
+import { standardizeError as sharedStandardizeError } from './standardizeError';
 
 interface ApiKeys {
   current: string;
@@ -232,47 +233,18 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       console.error(`[OpenAIModelProvider] Error calling OpenAI API (model: ${model}):`, error);
       // Try to map OpenAI specific errors if possible, otherwise generic
       if (error instanceof OpenAI.APIError) {
-        let errorCode: AIModelError['code'] = 'UNKNOWN';
-        let retryable = true; // Default for unknown API errors
-        const status = error.status;
-
-        if (error instanceof OpenAI.RateLimitError) { // HTTP 429
-          errorCode = 'RATE_LIMIT';
-        } else if (error instanceof OpenAI.AuthenticationError) { // HTTP 401
-          errorCode = 'AUTH';
-          retryable = false;
-        } else if (error instanceof OpenAI.PermissionDeniedError) { // HTTP 403
-          errorCode = 'AUTH'; // Or a more specific PERMISSION_DENIED
-          retryable = false;
-        } else if (error instanceof OpenAI.NotFoundError) { // HTTP 404 (e.g. model not found)
-            errorCode = 'CAPABILITY';
-            retryable = false;
-        } else if (error instanceof OpenAI.ConflictError || error instanceof OpenAI.UnprocessableEntityError) { // HTTP 409, 422
-            errorCode = 'UNKNOWN'; // Or map to bad request/content error
-            retryable = false;
-        } else if (error instanceof OpenAI.InternalServerError) { // HTTP 500+
-            errorCode = 'UNKNOWN'; // Retryable
-        } else {
-             // Fallback for other OpenAI APIErrors
-            if (status === 401) { // Explicitly check for 401 status
-                errorCode = 'AUTH';
-                retryable = false;
-            } else if (status === 403) { // Explicitly check for 403 status
-                errorCode = 'AUTH'; 
-                retryable = false;
-            } else if (status && status >= 500) {
-                errorCode = 'UNKNOWN';
-                retryable = true;
-            } else if (status && status >= 400 && status < 500) { // Other 4xx client errors
-                errorCode = 'CAPABILITY'; 
-                retryable = false;
-            }
-            // If status is undefined or doesn't fit above, it remains UNKNOWN and retryable (default)
-        }
-        return this.createError(errorCode, `OpenAI API Error: ${error.message}`, status, retryable);
+        // Use the shared standardizeError function
+        return this.standardizeError(error);
+      } else if (error.code === 'ECONNABORTED' || (error.message && error.message.toLowerCase().includes('timeout'))) {
+        return this.standardizeError(error);
       }
-      // For non-OpenAI SDK errors (network, etc.)
-      return this.createError('UNKNOWN', `Failed to generate response from OpenAI: ${error.message || 'Unexpected error'}`, undefined, true);
+      // Fallback for other types of errors not caught by the above
+      return this.createError(
+        'UNKNOWN',
+        `Unhandled error in OpenAI provider: ${error.message || error}`,
+        error.status || 500,
+        true // Default to retryable for truly unknown errors
+      );
     }
   }
 
@@ -334,7 +306,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
    * Get the default model for OpenAI
    */
   protected getDefaultModel(): string {
-    return 'gpt-3.5-turbo';
+    return this.defaultModel;
   }
   
   /**
@@ -389,62 +361,14 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
   //   };
   // }
 
+  /**
+   * Standardizes an error from this provider into the common AIModelError format.
+   * This method implements the abstract method from BaseAIModelProvider.
+   * @param error The error object from the provider.
+   * @returns An AIModelError object.
+   */
   protected standardizeError(error: any): AIModelError {
-    let errorCode: AIModelError['code'] = 'UNKNOWN';
-    let retryable = true; // Default for unknown errors
-    let status: number | undefined = undefined;
-    let detail = `[${this.providerName}] Error: ${error.message || 'Unknown internal error'}`;
-
-    if (error instanceof OpenAI.APIError) {
-      status = error.status;
-      detail = `[${this.providerName}] API Error: ${error.message}`;
-
-      if (error instanceof OpenAI.RateLimitError) { // HTTP 429
-        errorCode = 'RATE_LIMIT';
-      } else if (error instanceof OpenAI.AuthenticationError) { // HTTP 401
-        errorCode = 'AUTH';
-        retryable = false;
-      } else if (error instanceof OpenAI.PermissionDeniedError) { // HTTP 403
-        errorCode = 'AUTH'; // Or a more specific PERMISSION_DENIED
-        retryable = false;
-      } else if (error instanceof OpenAI.NotFoundError) { // HTTP 404 (e.g. model not found)
-        errorCode = 'CAPABILITY';
-        retryable = false;
-      } else if (error instanceof OpenAI.ConflictError || error instanceof OpenAI.UnprocessableEntityError) { // HTTP 409, 422
-        errorCode = 'CAPABILITY'; // Often due to invalid request structure for the model
-        retryable = false;
-      } else if (error instanceof OpenAI.InternalServerError) { // HTTP 500+
-        errorCode = 'UNKNOWN'; // Provider-side server error
-        retryable = true;
-      } else {
-        // Generic OpenAI.APIError classification based on status code
-        if (status && status >= 500) {
-          errorCode = 'UNKNOWN';
-          retryable = true;
-        } else if (status && status === 429) { // Should be caught by RateLimitError, but as a fallback
-            errorCode = 'RATE_LIMIT';
-            retryable = true;
-        } else if (status && (status === 401 || status === 403)) { // Fallback for auth issues
-            errorCode = 'AUTH';
-            retryable = false;
-        } else if (status && status >= 400 && status < 500) {
-          errorCode = 'CAPABILITY'; // General client-side error (e.g. invalid request)
-          retryable = false;
-        } else {
-          // Default for unclassified APIError or non-HTTP errors from APIError constructor
-          errorCode = 'UNKNOWN';
-          retryable = false; 
-        }
-      }
-    } else if (error.name === 'TimeoutError' || (error.message && error.message.toLowerCase().includes('timeout'))) {
-        errorCode = 'TIMEOUT';
-        retryable = true;
-        detail = `[${this.providerName}] Request timed out: ${error.message}`;
-    } else {
-      // Non-OpenAI.APIError, could be network issue, programming error, etc.
-      retryable = true; // Default to retryable for truly unknown errors passed to standardizeError
-    }
-
-    return this.createError(errorCode, detail, status, retryable);
+    // Call the shared standardizeError function, passing the provider name
+    return sharedStandardizeError(error, this.providerName);
   }
 } 

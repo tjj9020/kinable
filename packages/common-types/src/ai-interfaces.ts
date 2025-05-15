@@ -136,4 +136,80 @@ export interface IAIModelProvider {
    * @returns RPM and TPM limits
    */
   getProviderLimits(): ProviderLimits;
+}
+
+/**
+ * Represents the health state of an AI provider in a specific region,
+ * typically stored in DynamoDB for circuit breaker patterns.
+ */
+export interface ProviderHealthState {
+  /**
+   * Composite key representing the provider and its region.
+   * Format: providerName#region (e.g., "OpenAI#us-east-1")
+   */
+  providerRegion: string;
+
+  /**
+   * Current status of the circuit breaker for this provider.
+   * - CLOSED: Provider is considered healthy, requests are allowed.
+   * - OPEN: Provider is considered unhealthy, requests are blocked (or routed elsewhere).
+   * - HALF_OPEN: A limited number of test requests are allowed to check if the provider has recovered.
+   */
+  status: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
+  /**
+   * Number of consecutive failures that have occurred.
+   * Reset to 0 upon a successful request when in CLOSED or HALF_OPEN state.
+   */
+  consecutiveFailures: number;
+
+  /**
+   * Number of successes recorded while in the HALF_OPEN state.
+   * Reset when transitioning out of HALF_OPEN.
+   */
+  currentHalfOpenSuccesses?: number;
+
+  /**
+   * Total number of failures recorded for this provider.
+   * Useful for longer-term monitoring and metrics.
+   * Should be periodically reset or managed within a time window if not using TTL for full item expiry.
+   */
+  totalFailures: number;
+
+  /**
+   * Total number of successful requests recorded for this provider.
+   * Useful for longer-term monitoring and metrics.
+   * Should be periodically reset or managed within a time window if not using TTL for full item expiry.
+   */
+  totalSuccesses: number;
+
+  /**
+   * Timestamp (Unix epoch milliseconds) of the last recorded failure.
+   * Used to determine if the cooldown period for OPEN state has passed.
+   */
+  lastFailureTimestamp?: number; // Optional: might not exist if no failures yet
+
+  /**
+   * Timestamp (Unix epoch milliseconds) when the circuit was last moved to the OPEN state.
+   * Used in conjunction with a cooldown period to decide when to transition to HALF_OPEN.
+   */
+  openedTimestamp?: number; // Optional: only relevant when status is OPEN or was recently OPEN
+
+  /**
+   * Timestamp (Unix epoch milliseconds) of the last time the status field changed.
+   */
+  lastStateChangeTimestamp: number;
+  
+  /**
+   * DynamoDB Time-to-Live attribute.
+   * Unix epoch seconds. Item will be deleted after this time.
+   * Useful for automatically cleaning up stale health records if a provider is removed
+   * or if we want states to naturally reset if not updated.
+   */
+  ttl?: number; // Optional: depends on TTL strategy
+}
+
+// Configuration for an AI model provider
+export interface AIProviderConfig {
+  // ... existing code ...
 } 

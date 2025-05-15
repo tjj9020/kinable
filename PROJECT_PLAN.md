@@ -140,16 +140,16 @@ This section clarifies that the goal is not just functional implementations with
     *   **Tasks**:
         *   Follow `NEW_PROJECT_GUIDE.md` to ensure `kinable-dev` AWS CLI profile is configured and working (`aws sts get-caller-identity --profile kinable-dev`).
         *   Inside `apps/chat-api-service/`, create a minimal SAM application:
-            *   `sam.yaml` defining a single Lambda function (e.g., `HelloWorldFunction`) and an API Gateway HTTP API endpoint. Ensure global Lambda architecture is set to `arm64` or `HelloWorldFunction` specifically targets `arm64`.
+            *   `sam.yaml` defining a single Lambda function (e.g., `HelloWorldFunction`) and an API Gateway HTTP API endpoint. Ensure global Lambda architecture is set to `arm64` or `HelloWorldFunction` specifically targets `arm64`. [COMPLETED - Global architecture set to arm64 and deployed]
             *   A simple handler (e.g., `src/handlers/hello.ts`) that returns a "Hello World" JSON response.
         *   Implement basic unit tests for the handler.
-        *   Deploy using `sam build --profile kinable-dev` and `sam deploy --guided --profile kinable-dev`.
+        *   Deploy using `sam build --profile kinable-dev` and `sam deploy --guided --profile kinable-dev`. [COMPLETED - Service redeployed successfully with arm64]
         *   Test the deployed API endpoint.
         *   **IaC Governance Check (Manual for Phase 0)**: Manually run `cfn-lint` against the `sam.yaml` of the Hello World service to ensure basic compliance, as a precursor to CI automation.
     *   **Multi-Region Consideration**: 
         *   Ensure resource naming follows region-aware convention (e.g., `KinableHttpApi-${AWS::Region}`).
         *   Parameterize any region-specific configurations.
-    *   **Definition of Done**: The "Hello World" Lambda is deployed, unit tests pass, and its API Gateway endpoint returns a successful response.
+    *   **Definition of Done**: The "Hello World" Lambda is deployed, unit tests pass, and its API Gateway endpoint returns a successful response. The service is confirmed to run on Graviton2 (arm64) architecture. [COMPLETED]
     *   **Commit Point**: After successful deployment and testing.
 
 *   **Step 0.3: Establish Foundational Development Artifacts [COMPLETED]**
@@ -323,9 +323,9 @@ This section clarifies that the goal is not just functional implementations with
     *   **Goal**: Extend the AI provider architecture to support a second provider (e.g., Anthropic Claude) with intelligent routing and failover capabilities.
     *   **Tasks**:
         *   Create a second provider implementation:
-            *   `AnthropicModelProvider` implementing `IAIModelProvider` [COMPLETED - Uses real Anthropic SDK, retrieves keys from Secrets Manager, handles conversation history]
+            *   `AnthropicModelProvider` implementing `IAIModelProvider` [COMPLETED - Uses real Anthropic SDK, retrieves keys from Secrets Manager, handles conversation history, implements standardizeError]
             *   Adapt Anthropic's API to match our standardized interface [COMPLETED]
-            *   Add appropriate error handling and retry logic [COMPLETED - Basic error mapping implemented]
+            *   Add appropriate error handling and retry logic [COMPLETED - Basic error mapping and standardizeError implemented]
             *   Unit tests for `AnthropicModelProvider` (key loading, response generation, error handling, conversation history) [COMPLETED - All tests passing]
             *   **Property-Based Fuzz Testing**: For `IAIModelProvider` implementations (and other critical shared interfaces), use property-based fuzz testing (e.g., with `fast-check`) in `*.contract.test.ts` files to validate correct contract implementation across a wide variety of inputs and edge cases.
         *   Enhance the `AIModelRouter` with:
@@ -374,9 +374,9 @@ This section clarifies that the goal is not just functional implementations with
         *   All mock implementations replaced with production-ready code.
     *   **Commit Point**: After second provider implementation, enhanced routing, and failover testing.
     *   **Partially Completed**:
-        *   Basic error handling and retry logic [COMPLETED for AnthropicModelProvider]
+        *   Basic error handling and retry logic [COMPLETED for AnthropicModelProvider, including standardizeError]
         *   Multi-region table configuration
-        *   Error standardization with proper types [COMPLETED for AnthropicModelProvider]
+        *   Error standardization with proper types [COMPLETED for AnthropicModelProvider and OpenAIModelProvider via standardizeError]
 
 *   **Step 2.3: Basic Moderation Engine Lambda (Pre-Prompt) with Interfaces**
     *   **Goal**: Create a comprehensive content moderation system using an `IModerationProvider` interface to check prompts for inappropriate content before sending to AI models.
@@ -508,7 +508,7 @@ This section clarifies that the goal is not just functional implementations with
             *   **Fault Injection GameDays**: Regularly conduct "GameDays" using AWS Fault Injection Simulator (FIS) or manual methods to simulate failures (e.g., provider API outages, Secrets Manager throttling, DynamoDB errors). This helps verify that circuit breakers, fallbacks, and retry mechanisms work as expected and improves overall system resilience.
             *   **Proactive Quota Management**: After observing 3-5 days of sustained usage near existing quotas for third-party AI providers (OpenAI, Anthropic, etc.), proactively file support tickets to request quota increases. Provide usage charts and token logs as evidence to support the request.
             *   **Compute Optimization**:
-                *   **Graviton2 by Default**: Ensure new Lambda functions default to Graviton2 (arm64) architecture for improved price-performance. Existing functions should be migrated where feasible.
+                *   **Graviton2 by Default**: Ensure new Lambda functions default to Graviton2 (arm64) architecture for improved price-performance. Existing functions should be migrated where feasible. [COMPLETED - chat-api-service migrated and deployed]
                 *   **Memory Tuning**: Use tools like AWS Lambda Power Tuning (e.g., via `aws-lambda-power-tuning` Step Functions state machine, run in CI or periodically) to find the optimal memory configuration for each Lambda function, balancing cost and performance.
         *   **Distributed Tracing**: Ensure distributed tracing (e.g., via AWS X-Ray, enabled by Lambda Powertools Tracer) is implemented across all services involved in a request flow. Trace headers must be propagated between Lambdas, API Gateway, and other services to allow visualization of the entire request path and easy identification of bottlenecks.
     *   **Multi-Region Considerations**:

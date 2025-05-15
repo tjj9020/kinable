@@ -11,7 +11,7 @@ Globals:
     MemorySize: 128
     Runtime: nodejs20.x
     Architectures:
-      - x86_64
+      - arm64
 
 Resources:
   # Define the HTTP API with authorizer configuration

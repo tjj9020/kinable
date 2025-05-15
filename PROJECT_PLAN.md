@@ -136,11 +136,11 @@ This section clarifies that the goal is not just functional implementations with
     *   **Commit Point**: After setup and initial package creation.
 
 *   **Step 0.2: AWS `kinable-dev` Profile & "Hello World" SAM Deployment [COMPLETED]**
-    *   **Goal**: Confirm AWS CLI access with the `kinable-dev` profile and successfully deploy a basic "Hello World" Lambda using AWS SAM.
+    *   **Goal**: Confirm AWS CLI access with the `kinable-dev` profile and successfully deploy a basic "Hello World" Lambda using AWS SAM, configured for Graviton2 (arm64) architecture.
     *   **Tasks**:
         *   Follow `NEW_PROJECT_GUIDE.md` to ensure `kinable-dev` AWS CLI profile is configured and working (`aws sts get-caller-identity --profile kinable-dev`).
         *   Inside `apps/chat-api-service/`, create a minimal SAM application:
-            *   `sam.yaml` defining a single Lambda function (e.g., `HelloWorldFunction`) and an API Gateway HTTP API endpoint.
+            *   `sam.yaml` defining a single Lambda function (e.g., `HelloWorldFunction`) and an API Gateway HTTP API endpoint. Ensure global Lambda architecture is set to `arm64` or `HelloWorldFunction` specifically targets `arm64`.
             *   A simple handler (e.g., `src/handlers/hello.ts`) that returns a "Hello World" JSON response.
         *   Implement basic unit tests for the handler.
         *   Deploy using `sam build --profile kinable-dev` and `sam deploy --guided --profile kinable-dev`.
@@ -508,7 +508,7 @@ This section clarifies that the goal is not just functional implementations with
             *   **Fault Injection GameDays**: Regularly conduct "GameDays" using AWS Fault Injection Simulator (FIS) or manual methods to simulate failures (e.g., provider API outages, Secrets Manager throttling, DynamoDB errors). This helps verify that circuit breakers, fallbacks, and retry mechanisms work as expected and improves overall system resilience.
             *   **Proactive Quota Management**: After observing 3-5 days of sustained usage near existing quotas for third-party AI providers (OpenAI, Anthropic, etc.), proactively file support tickets to request quota increases. Provide usage charts and token logs as evidence to support the request.
             *   **Compute Optimization**:
-                *   **Graviton2**: Migrate Lambda functions to Graviton2 (arm64) architecture where feasible for improved price-performance.
+                *   **Graviton2 by Default**: Ensure new Lambda functions default to Graviton2 (arm64) architecture for improved price-performance. Existing functions should be migrated where feasible.
                 *   **Memory Tuning**: Use tools like AWS Lambda Power Tuning (e.g., via `aws-lambda-power-tuning` Step Functions state machine, run in CI or periodically) to find the optimal memory configuration for each Lambda function, balancing cost and performance.
         *   **Distributed Tracing**: Ensure distributed tracing (e.g., via AWS X-Ray, enabled by Lambda Powertools Tracer) is implemented across all services involved in a request flow. Trace headers must be propagated between Lambdas, API Gateway, and other services to allow visualization of the entire request path and easy identification of bottlenecks.
     *   **Multi-Region Considerations**:

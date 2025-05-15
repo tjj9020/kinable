@@ -69,10 +69,10 @@
 9.  **Infrastructure as Code (IaC) Strategy & Governance**:
     *   **Tooling**: We will primarily use AWS SAM for simpler Lambda-based services. For more complex infrastructure, workflows involving multiple AWS services (e.g., Step Functions, Global Tables configurations, complex networking), or where higher-level abstractions are beneficial, AWS CDK (Cloud Development Kit) will be used. This allows us to leverage SAM's speed for common Lambda patterns and CDK's type safety and composability for more intricate setups (e.g., an `infra/chat-cdk/` for a complex chat workflow or `infra/core-sam/` for basic API services).
     *   **IaC Governance**: To maintain security, best practices, and cost-effectiveness in our IaC:
-        *   `cdk-nag`: For CDK-based infrastructure, `cdk-nag` will be used to check stacks against best practice rules (e.g., from AWS Solutions Architect Framework).
-        *   `cfn-guard` (or `cfn-lint`): For SAM/CloudFormation templates, `cfn-guard` or `cfn-lint` will be used to validate templates against policy-as-code rules and AWS best practices.
+        *   `cdk-nag`: For CDK-based infrastructure, `cdk-nag` (installed as a dev dependency in relevant CDK packages) will be used to check stacks against best practice rules (e.g., from AWS Solutions Architect Framework).
+        *   `cfn-lint`: For SAM/CloudFormation templates, `cfn-lint` (expected to be available in the CI/CD environment) will be used to validate templates against policy-as-code rules and AWS best practices.
         *   *Why*: To prevent common misconfigurations (e.g., public S3 buckets, overly permissive IAM roles, missing encryption or logging).
-        *   *How*: These tools will be installed as dev dependencies and integrated into CI/CD pipelines to fail builds on critical violations.
+        *   *How*: These tools will be integrated into CI/CD pipelines to fail builds on critical violations. `cdk-nag` checks can be run during `cdk synth`, and `cfn-lint` can be run against generated SAM/CloudFormation templates.
 
 10. **Compliance and Privacy by Design**:
     *   **Compliance Backlog**: A compliance backlog will be maintained (e.g., in `PROJECT_PLAN.md` or a separate `COMPLIANCE.md` document) to track requirements related to regulations like COPPA, GDPR, and aspirations for SOC2. This includes defining data deletion flows, data retention policies, access logging, and mapping features to compliance controls. Phase targets will be assigned to these items.
@@ -131,8 +131,8 @@ This section clarifies that the goal is not just functional implementations with
         *   Confirm `pnpm install`, `pnpm build`, `pnpm test`, `pnpm lint` commands are working.
         *   Create a new application package directory under `apps/` for our main API (e.g., `apps/chat-api-service`).
         *   Create a new shared package under `packages/` for common types (e.g., `packages/kinable-types`) if not already present. Define initial shared interfaces here (e.g., `IUserIdentity`, `IApiResponse`).
-        *   **CI/CD Foundation**: Establish standard CI/CD pipeline templates (e.g., using GitHub Actions). For each service, this template should include steps for: build, lint, unit tests, IaC validation (see IaC Governance), deployment to a test environment, and basic smoke tests. Example: `.github/workflows/deploy-chat-api-service.yml`.
-    *   **Definition of Done**: Core build/lint/test commands execute successfully. New service/package directories are created. Initial shared types/interfaces defined. Basic CI template available.
+        *   **CI/CD Foundation**: Establish standard CI/CD pipeline templates (e.g., using GitHub Actions). For each service, this template should include steps for: build, lint, unit tests, IaC validation (ensuring `cfn-lint` is run against SAM/CloudFormation templates and `cdk-nag` for CDK stacks), deployment to a test environment, and basic smoke tests. Example: `.github/workflows/deploy-chat-api-service.yml`.
+    *   **Definition of Done**: Core build/lint/test commands execute successfully. New service/package directories are created. Initial shared types/interfaces defined. Basic CI template available, referencing IaC validation tools.
     *   **Commit Point**: After setup and initial package creation.
 
 *   **Step 0.2: AWS `kinable-dev` Profile & "Hello World" SAM Deployment [COMPLETED]**
@@ -145,6 +145,7 @@ This section clarifies that the goal is not just functional implementations with
         *   Implement basic unit tests for the handler.
         *   Deploy using `sam build --profile kinable-dev` and `sam deploy --guided --profile kinable-dev`.
         *   Test the deployed API endpoint.
+        *   **IaC Governance Check (Manual for Phase 0)**: Manually run `cfn-lint` against the `sam.yaml` of the Hello World service to ensure basic compliance, as a precursor to CI automation.
     *   **Multi-Region Consideration**: 
         *   Ensure resource naming follows region-aware convention (e.g., `KinableHttpApi-${AWS::Region}`).
         *   Parameterize any region-specific configurations.
@@ -155,10 +156,12 @@ This section clarifies that the goal is not just functional implementations with
     *   **Goal**: Create initial documents and test configurations to support core development principles.
     *   **Tasks**:
         *   Created `docs/adr/` directory for Architecture Decision Records. [COMPLETED]
+        *   Created `docs/adr/000-template.md` with a standard ADR template. [NEWLY ADDED & COMPLETED]
         *   Created `docs/ddb-key-review.md` with an initial checklist for DynamoDB partition key design. [COMPLETED]
+        *   Created `COMPLIANCE.md` with initial sections for COPPA, GDPR, and SOC2-lite. [NEWLY ADDED & COMPLETED]
         *   Implemented a basic contract test for `IUserIdentity` in `packages/common-types/src/core-interfaces.contract.test.ts`. [COMPLETED]
         *   Updated Jest configuration in `packages/common-types/jest.config.js` to include `*.contract.test.ts` files for discovery. [COMPLETED]
-    *   **Definition of Done**: Essential documentation folders and initial examples/configurations for ADRs, DynamoDB reviews, and contract testing are in place.
+    *   **Definition of Done**: Essential documentation folders, templates, and initial examples/configurations for ADRs, DynamoDB reviews, compliance tracking, and contract testing are in place.
     *   **Commit Point**: After creation of foundational artifacts.
 
 ---

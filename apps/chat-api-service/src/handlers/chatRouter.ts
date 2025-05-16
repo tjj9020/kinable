@@ -102,7 +102,10 @@ export const handler = async (
       temperature: requestBody.temperature || 0.7,
       streaming: requestBody.streaming || false,
       requiredCapabilities: requestBody.capabilities || [],
-      context: requestContext
+      context: {
+        ...requestContext,
+        history: requestBody.history || []
+      }
     };
     
     // Route the request

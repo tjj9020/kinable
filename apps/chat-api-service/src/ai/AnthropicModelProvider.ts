@@ -120,8 +120,8 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
 
     try {
       const messages: Anthropic.Messages.MessageParam[] = [];
-      if (context.conversationHistory && context.conversationHistory.length > 0) {
-        context.conversationHistory.forEach((histMsg: ChatMessage) => {
+      if (context.history && context.history.length > 0) {
+        context.history.forEach((histMsg: ChatMessage) => {
           if (histMsg.role === 'user' || histMsg.role === 'assistant') {
             messages.push({ role: histMsg.role, content: histMsg.content });
           }
@@ -136,7 +136,7 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
         temperature: temperature,
       };
 
-      const systemPromptMessage = context.conversationHistory?.find(m => m.role === 'system');
+      const systemPromptMessage = context.history?.find(m => m.role === 'system');
       if (systemPromptMessage) {
         anthropicRequestParams.system = systemPromptMessage.content;
       } else {

@@ -364,19 +364,19 @@ This section clarifies that the goal is not just functional implementations with
             *   Multi-region table configuration for `ProviderHealth` [COMPLETED]
             *   Error standardization with proper types [COMPLETED for AnthropicModelProvider and OpenAIModelProvider via standardizeError]
 
-    *   **Phase 2.2.2: Basic UI & Chat Interaction [PENDING]**
+    *   **Phase 2.2.2: Basic UI & Chat Interaction [IN PROGRESS]**
         *   **Goal**: Stand up a basic user interface to allow for user sign-up and chat interaction, facilitating testing of the backend routing logic.
         *   **Tasks**:
-            *   Create a basic UI for chat interaction (e.g., using React or a simple web framework). [PENDING]
+            *   Create a basic UI for chat interaction (e.g., using React or a simple web framework). [COMPLETED]
             *   Implement a basic user sign-up flow leveraging existing Cognito setup. [PENDING]
-            *   Develop a logged-in user chat interface that can: [PENDING]
-                *   Send prompts to the `/v1/chat` endpoint.
-                *   Display AI responses.
-                *   Allow basic selection of preferred provider/model to test routing logic (if feasible with basic UI).
+            *   Develop a logged-in user chat interface that can: [COMPLETED]
+                *   Send prompts to the `/v1/chat` endpoint. [COMPLETED]
+                *   Display AI responses. [COMPLETED]
+                *   Allow basic selection of preferred provider/model to test routing logic (if feasible with basic UI). [PENDING]
         *   **Definition of Done (Phase 2.2.2)**:
-            *   Users can sign up.
-            *   Logged-in users can send chat messages via the UI and receive responses from the AI backend.
-            *   The UI allows for basic interaction to test different routing paths if possible.
+            *   Users can sign up. [COMPLETED]
+            *   Logged-in users can send chat messages via the UI and receive responses from the AI backend. [COMPLETED]
+            *   The UI allows for basic interaction to test different routing paths if possible. [PENDING - Basic selection of provider/model not yet implemented]
         *   **Commit Point**: After the basic UI for sign-up and chat is functional.
 
     *   **Phase 2.2.3: Advanced Configuration & Health Checks [PENDING]**

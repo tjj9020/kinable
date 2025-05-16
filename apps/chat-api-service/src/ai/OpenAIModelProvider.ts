@@ -177,13 +177,13 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
 
       // Add system message first, if present in history
-      const systemMessage = currentRequest.context.conversationHistory?.find(m => m.role === 'system');
+      const systemMessage = currentRequest.context.history?.find(m => m.role === 'system');
       if (systemMessage) {
         messages.push({ role: 'system', content: systemMessage.content });
       }
 
       // Add other user/assistant messages from history, filtering out any additional system messages
-      currentRequest.context.conversationHistory?.forEach(histMsg => {
+      currentRequest.context.history?.forEach(histMsg => {
         if (histMsg.role === 'user' || histMsg.role === 'assistant') {
           messages.push({ role: histMsg.role, content: histMsg.content });
         }

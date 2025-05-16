@@ -77,7 +77,7 @@ export interface AIModelRequest {
   estimatedInputTokens?: number;    // Optional: Estimated tokens for the input prompt + context
   estimatedOutputTokens?: number;   // Optional: Estimated tokens for the desired output/completion
   context: RequestContext & { // Extend RequestContext specifically for this request type
-    conversationHistory?: ChatMessage[];
+    history?: ChatMessage[]; // Renamed from conversationHistory and using existing ChatMessage type
     // other existing fields from RequestContext like familyId, profileId, userRegion, etc.
   };
 }
@@ -222,4 +222,10 @@ export interface ProviderHealthState {
 // Configuration for an AI model provider
 export interface AIProviderConfig {
   // ... existing code ...
-} 
+}
+
+// Removed this interface, ChatMessage will be used
+// export interface MessageInHistory {
+//   role: 'user' | 'assistant' | 'system';
+//   content: string;
+// } 

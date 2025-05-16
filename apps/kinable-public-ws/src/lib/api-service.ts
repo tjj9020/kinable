@@ -87,10 +87,21 @@ export async function apiFetch<T>(
 }
 
 // Chat API functions
+
+// Define a simple Message type for chat history items
+export interface Message {
+  id: string;
+  role: 'user' | 'assistant' | 'system'; // Added 'system' for potential future use
+  content: string;
+  timestamp: number;
+  // Add any other relevant fields that might be part of your message structure
+}
+
 export interface ChatRequest {
   prompt: string;
   conversationId?: string;
   preferredModel?: string;
+  history?: Message[]; // Added conversation history
 }
 
 export interface ChatResponse {

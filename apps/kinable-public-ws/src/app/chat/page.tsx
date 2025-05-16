@@ -90,7 +90,9 @@ export default function ChatPage() {
     try {
       // Create chat request
       const request: ChatRequest = {
-        prompt: currentInput // Use the captured value
+        prompt: currentInput, // Use the captured value
+        history: messages, // Send the current messages as history
+        // We can add conversationId here later if needed for context continuation
       }
       
       // Get response from AI

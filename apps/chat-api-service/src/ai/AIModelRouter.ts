@@ -2,9 +2,10 @@ import {
   IAIModelProvider, 
   AIModelRequest, 
   AIModelResult,
-  AIModelError
-} from '../../../../packages/common-types/src/ai-interfaces';
-import { ProviderConfiguration } from '../../../../packages/common-types/src/config-schema';
+  AIModelError,
+  AiServiceConfiguration, 
+  DEFAULT_ROUTING_WEIGHTS 
+} from '@kinable/common-types';
 import { CircuitBreakerManager } from './CircuitBreakerManager';
 import { ConfigurationService } from './ConfigurationService';
 import { OpenAIModelProvider } from './OpenAIModelProvider';
@@ -25,21 +26,25 @@ export class AIModelRouter {
   private providers: Map<string, IAIModelProvider> = new Map();
   private configService: ConfigurationService;
   private routerAwsRegion: string;
+  private routerStage: string;
   private circuitBreakerManager: CircuitBreakerManager;
   
   /**
    * Create a new AIModelRouter
    * @param configService An instance of ConfigurationService.
    * @param routerRegion The AWS region for AWS service clients initiated by the router itself.
+   * @param routerStage The deployment stage (e.g., 'kinable-dev') for placeholder replacement.
    * @param initialProviders Optional initial providers.
    */
   constructor(
     configService: ConfigurationService,
     routerRegion: string,
+    routerStage: string,
     initialProviders: Record<string, IAIModelProvider> = {}
   ) {
     this.configService = configService;
     this.routerAwsRegion = routerRegion;
+    this.routerStage = routerStage;
     
     const ddbClient = new DynamoDBClient({ region: this.routerAwsRegion });
     const ddbDocClient = DynamoDBDocumentClient.from(ddbClient);
@@ -59,7 +64,7 @@ export class AIModelRouter {
    * Initialize the OpenAI provider if it doesn't exist yet.
    * @param appConfig The application configuration containing provider details.
    */
-  private async initializeOpenAI(appConfig: ProviderConfiguration): Promise<OpenAIModelProvider> {
+  private async initializeOpenAI(appConfig: AiServiceConfiguration): Promise<OpenAIModelProvider> {
     if (!this.providers.has('openai')) {
       const openAIConfig = appConfig.providers.openai;
 
@@ -72,18 +77,19 @@ export class AIModelRouter {
         throw new Error("Database provider not available from ConfigurationService in AIModelRouter");
       }
       
-      // Use type assertion to access properties
-      const secretId = (openAIConfig as any).secretId;
+      let secretId = openAIConfig.secretId;
       if (!secretId) {
         throw new Error("OpenAI provider secretId missing from configuration");
       }
+      secretId = secretId.replace('{env}', this.routerStage).replace('{region}', this.routerAwsRegion);
       
-      const defaultOpenAIModel = openAIConfig.defaultModel || appConfig.routing.defaultModel || "gpt-3.5-turbo";
+      const defaultOpenAIModel = openAIConfig.defaultModel || appConfig.routing?.defaultModel || "gpt-3.5-turbo";
       const provider = new OpenAIModelProvider(
         secretId,
         this.routerAwsRegion,
         dbProvider, 
-        defaultOpenAIModel
+        defaultOpenAIModel,
+        openAIConfig
       );
       this.providers.set('openai', provider);
     }
@@ -94,7 +100,7 @@ export class AIModelRouter {
    * Initialize the Anthropic provider if it doesn't exist yet.
    * @param appConfig The application configuration containing provider details.
    */
-  private async initializeAnthropic(appConfig: ProviderConfiguration): Promise<AnthropicModelProvider> {
+  private async initializeAnthropic(appConfig: AiServiceConfiguration): Promise<AnthropicModelProvider> {
     if (!this.providers.has('anthropic')) {
       const anthropicConfig = appConfig.providers.anthropic;
 
@@ -107,18 +113,19 @@ export class AIModelRouter {
         throw new Error("Database provider not available from ConfigurationService in AIModelRouter");
       }
       
-      // Use type assertion to access properties
-      const secretId = (anthropicConfig as any).secretId;
+      let secretId = anthropicConfig.secretId;
       if (!secretId) {
         throw new Error("Anthropic provider secretId missing from configuration");
       }
+      secretId = secretId.replace('{env}', this.routerStage).replace('{region}', this.routerAwsRegion);
       
-      const defaultAnthropicModel = anthropicConfig.defaultModel || appConfig.routing.defaultModel || "claude-3-haiku-20240307";
+      const defaultAnthropicModel = anthropicConfig.defaultModel || appConfig.routing?.defaultModel || "claude-3-haiku-20240307";
       const provider = new AnthropicModelProvider(
         secretId,
         this.routerAwsRegion,
         dbProvider,
-        defaultAnthropicModel
+        defaultAnthropicModel,
+        anthropicConfig
       );
       this.providers.set('anthropic', provider);
     }
@@ -152,7 +159,7 @@ export class AIModelRouter {
       }> = [];
 
       // Use providerPreferenceOrder from config or fallback to a default if not available
-      const providerOrder = (config.routing as any).providerPreferenceOrder || 
+      const providerOrder = config.routing?.providerPreferenceOrder || 
                           ['openai', 'anthropic'];  // Default fallback
 
       const initialProvidersToConsider = request.preferredProvider
@@ -184,9 +191,17 @@ export class AIModelRouter {
             else if (providerName === 'anthropic') providerInstance = await this.initializeAnthropic(config);
             else throw new Error(`Provider ${providerName} not configured for dynamic initialization.`);
           } catch (initError: any) {
+            if (
+              initError.message &&
+              (initError.message.includes('provider configuration missing') ||
+               initError.message.includes('not configured for dynamic initialization'))
+            ) {
+              console.error(`[AIModelRouter] Critical initialization error for provider ${providerName}: ${initError.message}. Re-throwing.`);
+              throw initError;
+            }
             triedProvidersInfo.push({ name: providerName, reason: `initialization_failed: ${initError.message}` });
             console.error(`[AIModelRouter] Failed to initialize provider ${providerName}: ${initError.message}`);
-            await this.circuitBreakerManager.recordFailure(healthKey); // Record failure if init fails
+            await this.circuitBreakerManager.recordFailure(healthKey);
             continue;
           }
         }
@@ -219,15 +234,15 @@ export class AIModelRouter {
           continue;
         }
 
-        // Cost Calculation (per 1K tokens)
+        // Cost Calculation (per 1M tokens)
         const estInput = estimatedInputTokens ?? Math.ceil(prompt.length / 4); // Simple heuristic
         const estOutput = estimatedOutputTokens ?? requestMaxTokens ?? 256; // Default to 256 if no other estimate
         
-        // Use type assertions to access inputCost and outputCost
-        const inputCost = (modelConfig as any).inputCost || 0.001; // Default fallback value
-        const outputCost = (modelConfig as any).outputCost || 0.002; // Default fallback value
+        // Access new cost fields and adjust calculation from per 1K to per 1M
+        const inputCostPerMillion = modelConfig.costPerMillionInputTokens ?? 0.50; // Default, e.g. gpt-3.5-turbo
+        const outputCostPerMillion = modelConfig.costPerMillionOutputTokens ?? 1.50; // Default, e.g. gpt-3.5-turbo
         
-        const cost = ((estInput / 1000) * inputCost) + ((estOutput / 1000) * outputCost);
+        const cost = ((estInput / 1000000) * inputCostPerMillion) + ((estOutput / 1000000) * outputCostPerMillion);
 
         // Scoring (simplified for now)
         // Lower cost is better, so invert for score contribution if not 0.
@@ -237,11 +252,12 @@ export class AIModelRouter {
         const latencyScoreFactor = 1; 
         const qualityScoreFactor = 1; 
 
+        const routingWeights = config.routing?.weights || DEFAULT_ROUTING_WEIGHTS; // Use imported default
         const score =
-          (costScoreFactor * config.routing.weights.cost) +
-          (availabilityScoreFactor * config.routing.weights.availability) +
-          (latencyScoreFactor * config.routing.weights.latency) +
-          (qualityScoreFactor * config.routing.weights.quality);
+          (costScoreFactor * routingWeights.cost) +
+          (availabilityScoreFactor * routingWeights.availability) +
+          (latencyScoreFactor * routingWeights.latency) +
+          (qualityScoreFactor * routingWeights.quality);
 
         candidateProviders.push({
           name: providerName,
@@ -292,7 +308,11 @@ export class AIModelRouter {
               await this.circuitBreakerManager.recordFailure(currentProviderHealthKey, durationMs);
             }
             console.warn(`[AIModelRouter] Provider ${candidate.name} (Model: ${candidate.modelName}) returned error: ${result.detail}. Code: ${result.code}`);
-            // If not retryable by this provider, or a non-retryable error, we move to the next candidate
+            // Update the reason in triedProvidersInfo for this specific failure
+            const infoIndex = triedProvidersInfo.findIndex(info => info.name === candidate.name && info.reason === 'added_to_candidates');
+            if (infoIndex !== -1) {
+              triedProvidersInfo[infoIndex].reason = result.code.toLowerCase();
+            }
           }
         } catch (error: any) {
           durationMs = Date.now() - startTime;
@@ -313,13 +333,18 @@ export class AIModelRouter {
       );
 
     } catch (error: unknown) {
-      console.error(`[AIModelRouter] Outer catch: Unhandled critical error during request routing:`, error);
-      // Do not record generic failure here as we don't have a specific provider health key at this stage
+      if (error instanceof Error &&
+          (error.message.includes('provider configuration missing') ||
+           error.message.includes('not configured for dynamic initialization'))) {
+        console.error(`[AIModelRouter] Outer catch: Re-throwing critical initialization error:`, error.message);
+        throw error; // Re-throw these specific errors
+      }
+      console.error(`[AIModelRouter] Outer catch: Unhandled error during request routing:`, error);
       return this.createError(
         'UNKNOWN',
-        `Critical error routing request: ${(error instanceof Error ? error.message : 'Unknown error' )}`,
+        `Critical error routing request: ${error instanceof Error ? error.message : String(error)}`,
         500,
-        true
+        true // Defaulting to retryable true for unknown outer errors, can be debated
       );
     }
   }

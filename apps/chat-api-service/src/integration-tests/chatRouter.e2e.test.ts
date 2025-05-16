@@ -16,6 +16,7 @@ import fetch from "node-fetch"; // Or use native fetch in Node 18+
 import { v4 as uuidv4 } from 'uuid';
 import { ProviderConfiguration } from "@kinable/common-types"; // Adjust path as needed
 import * as https from 'https'; // Added import
+import { execSync } from 'child_process'; // Added for running the load script
 
 // Load environment variables from .env.dev.remote, similar to other integration tests
 
@@ -26,7 +27,7 @@ const STACK_NAME = process.env.TEST_STACK_NAME || "kinable-dev"; // Ensure this 
 const TEST_PROMPT = "Hello OpenAI, this is an E2E test. What is 1+1?";
 const TEST_FAMILY_ID_LOGICAL = `e2e-fam-${uuidv4()}`;
 const TEST_PROFILE_ID_LOGICAL = `e2e-prof-${uuidv4()}`;
-const TEST_CHAT_CONFIG_ID = "E2E_TEST_CHAT_CONFIG_V1"; // Config ID for this test
+// const TEST_CHAT_CONFIG_ID = "E2E_TEST_CHAT_CONFIG_V1"; // Config ID for this test - REMOVED
 
 // Will be populated by getStackOutputs
 let userPoolId: string;
@@ -153,56 +154,56 @@ async function setupDynamoDBTestData() {
   };
   await docClient.send(new PutCommand({ TableName: profilesTableName, Item: profileData }));
 
-  // Provider Configuration Data
-  const providerConfigData: ProviderConfiguration = {
-    version: "e2e-1.0.0",
-    updatedAt: Date.now(),
-    providers: {
-      openai: {
-        active: true,
-        keyVersion: 1,
-        secretId: "kinable-dev-us-east-2-openai-api-key",
-        endpoints: {
-          [AWS_REGION]: { url: "https://api.openai.com/v1", region: AWS_REGION, priority: 1, active: true }
-        },
-        models: {
-          "gpt-3.5-turbo": {
-            inputCost: 0.001,
-            outputCost: 0.002,
-            priority: 1,
-            capabilities: ["basic", "function_calling"],
-            contextSize: 4096,
-            streamingSupport: true,
-            functionCalling: true,
-            active: true,
-            rolloutPercentage: 100
-          }
-        },
-        rateLimits: { rpm: 100, tpm: 100000 },
-        retryConfig: { maxRetries: 1, initialDelayMs: 100, maxDelayMs: 1000 },
-        apiVersion: "v1",
-        rolloutPercentage: 100,
-        defaultModel: "gpt-3.5-turbo" // Add defaultModel for the provider
-      }
-    },
-    routing: {
-      rules: [],
-      weights: { cost: 1, quality: 0, latency: 0, availability: 0 },
-      providerPreferenceOrder: ["openai"],
-      defaultModel: "gpt-3.5-turbo",
-    },
-    featureFlags: { enableStreaming: false, enableFunctionCalling: false },
-  };
+  // Provider Configuration Data - REMOVED - This will now be handled by load-provider-config.ts script
+  // const providerConfigData: ProviderConfiguration = {
+  //   version: "e2e-1.0.0",
+  //   updatedAt: Date.now(),
+  //   providers: {
+  //     openai: {
+  //       active: true,
+  //       keyVersion: 1,
+  //       secretId: "kinable-dev-us-east-2-openai-api-key",
+  //       endpoints: {
+  //         [AWS_REGION]: { url: "https://api.openai.com/v1", region: AWS_REGION, priority: 1, active: true }
+  //       },
+  //       models: {
+  //         "gpt-3.5-turbo": {
+  //           inputCost: 0.001,
+  //           outputCost: 0.002,
+  //           priority: 1,
+  //           capabilities: ["basic", "function_calling"],
+  //           contextSize: 4096,
+  //           streamingSupport: true,
+  //           functionCalling: true,
+  //           active: true,
+  //           rolloutPercentage: 100
+  //         }
+  //       },
+  //       rateLimits: { rpm: 100, tpm: 100000 },
+  //       retryConfig: { maxRetries: 1, initialDelayMs: 100, maxDelayMs: 1000 },
+  //       apiVersion: "v1",
+  //       rolloutPercentage: 100,
+  //       defaultModel: "gpt-3.5-turbo" // Add defaultModel for the provider
+  //     }
+  //   },
+  //   routing: {
+  //     rules: [],
+  //     weights: { cost: 1, quality: 0, latency: 0, availability: 0 },
+  //     providerPreferenceOrder: ["openai"],
+  //     defaultModel: "gpt-3.5-turbo",
+  //   },
+  //   featureFlags: { enableStreaming: false, enableFunctionCalling: false },
+  // };
   
-  // Directly store the configData object, not nested inside another object
-  // AWS SDK DocumentClient will automatically convert JS objects to DynamoDB format
-  const configItem = {
-    configId: TEST_CHAT_CONFIG_ID,
-    configData: providerConfigData,
-    lastUpdated: new Date().toISOString(),
-  };
-  await docClient.send(new PutCommand({ TableName: providerConfigTableName, Item: configItem }));
-  console.log("[E2E Test] DynamoDB test data setup complete.");
+  // // Directly store the configData object, not nested inside another object
+  // // AWS SDK DocumentClient will automatically convert JS objects to DynamoDB format
+  // const configItem = {
+  //   configId: TEST_CHAT_CONFIG_ID,
+  //   configData: providerConfigData,
+  //   lastUpdated: new Date().toISOString(),
+  // };
+  // await docClient.send(new PutCommand({ TableName: providerConfigTableName, Item: configItem }));
+  console.log("[E2E Test] DynamoDB test data setup complete (excluding provider config, handled by script).");
 }
 
 async function cleanupTestData() {
@@ -226,8 +227,8 @@ async function cleanupTestData() {
   try {
     if (familiesTableName) await docClient.send(new DeleteCommand({ TableName: familiesTableName, Key: { familyId: prefixedFamilyId } }));
     if (profilesTableName) await docClient.send(new DeleteCommand({ TableName: profilesTableName, Key: { profileId: prefixedProfileId } }));
-    if (providerConfigTableName) await docClient.send(new DeleteCommand({ TableName: providerConfigTableName, Key: { configId: TEST_CHAT_CONFIG_ID } })); // No prefix for this table's key
-    console.log("[E2E Test] DynamoDB test data cleaned up.");
+    // if (providerConfigTableName) await docClient.send(new DeleteCommand({ TableName: providerConfigTableName, Key: { configId: TEST_CHAT_CONFIG_ID } })); // REMOVED
+    console.log("[E2E Test] DynamoDB test data cleaned up (provider config not deleted by this test).");
   } catch (error) {
     console.error("[E2E Test] Error cleaning up DynamoDB data:", error);
   }
@@ -248,24 +249,48 @@ describe("Chat Router E2E Test", () => {
 
     // Initialize AWS SDK clients
     const clientConfig: any = { region: AWS_REGION };
-    if (process.env.AWS_PROFILE) {
-      console.log(`[E2E Test ENV DEBUG] Using AWS_PROFILE: ${process.env.AWS_PROFILE} for SDK clients`);
-      // The AWS SDK v3 should pick up AWS_PROFILE from the environment automatically.
-      // Explicitly setting it via a credentials provider is more complex and usually not needed if the env var is set.
-      // We are relying on dotenv to set process.env.AWS_PROFILE and the SDK to pick it up.
-    }
+    // If AWS_PROFILE is set in .env.dev.remote or similar, you might need to configure credentials explicitly for SDK v3
+    // e.g., using fromIni() from @aws-sdk/credential-providers
+    // For now, assuming default credential chain or instance profile if run in AWS
     
     cfClient = new CloudFormationClient(clientConfig);
     cognitoClient = new CognitoIdentityProviderClient(clientConfig);
-    const ddbClient = new DynamoDBClient(clientConfig);
-    docClient = DynamoDBDocumentClient.from(ddbClient);
+    const dynClient = new DynamoDBClient(clientConfig);
+    docClient = DynamoDBDocumentClient.from(dynClient);
 
-    await getStackOutputs();
-    await createTestCognitoUser();
+    await getStackOutputs(); // Fetch API URLs, table names etc.
+
+    // Ensure GLOBAL_AISERVICE_CONFIG_V1 is loaded using the script
+    console.log('[E2E Test] Ensuring GLOBAL_AISERVICE_CONFIG_V1 is loaded via script...');
+    try {
+      // Determine the base path for scripts and config from the current test file directory
+      // __dirname is usually .../kinable/apps/chat-api-service/src/integration-tests
+      const projectRoot = '../../../../..'; // Relative path from dist/src/integration-tests to project root
+      const scriptPath = 'apps/chat-api-service/scripts/load-provider-config.ts';
+      const yamlPath = 'apps/chat-api-service/src/config/provider_config.yaml';
+      
+      // Construct paths relative to where pnpm exec is likely run from (project root)
+      const command = `pnpm exec ts-node ${scriptPath} --env=${STACK_NAME} --region=${AWS_REGION} --profile=${process.env.AWS_PROFILE || 'kinable-dev'} --yaml-file=${yamlPath}`;
+      
+      console.log(`[E2E Test] Executing command: ${command}`);
+      execSync(command, { stdio: 'inherit', cwd: projectRoot }); // Run from project root
+      console.log('[E2E Test] GLOBAL_AISERVICE_CONFIG_V1 load script executed successfully.');
+    } catch (error) {
+      console.error('[E2E Test] Failed to execute load-provider-config.ts script:', error);
+      // It might be okay if it fails due to already existing item if the script isn't idempotent on conflicts,
+      // but for a clean E2E setup, ensuring it can run is good.
+      // Depending on script behavior, you might not want to throw here if "already exists" is not a true failure.
+      // However, for robust E2E, ensuring the defined YAML is the one in DB is key.
+      // The current script overwrites, so it should be fine.
+      throw error; 
+    }
+
+    await cleanupTestData(); // Clean up any previous test data first (safer)
+    await setupDynamoDBTestData(); // Setup user, family, profile data
     testUserIdToken = await signInTestUser();
-    await setupDynamoDBTestData();
+    
     console.log("[E2E Test] beforeAll setup complete.");
-  }, 120000); // Increased timeout for setup
+  }, 60000); // Increased timeout for setup
 
   afterAll(async () => {
     console.log("[E2E Test] Starting afterAll cleanup...");

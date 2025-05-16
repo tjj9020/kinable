@@ -2,10 +2,10 @@ import { AIModelRouter } from './AIModelRouter';
 import { ConfigurationService } from './ConfigurationService';
 import { OpenAIModelProvider } from './OpenAIModelProvider';
 import { CircuitBreakerManager } from './CircuitBreakerManager';
-import { AIModelRequest, AIModelResult, IAIModelProvider, AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
-import { RequestContext } from '../../../../packages/common-types/src/core-interfaces';
-import { ProviderConfiguration } from '../../../../packages/common-types/src/config-schema';
-import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
+import { AIModelRequest, AIModelResult, IAIModelProvider, AIModelError } from '@kinable/common-types';
+import { RequestContext } from '@kinable/common-types';
+import { AiServiceConfiguration, ProviderConfig, ModelConfig } from '@kinable/common-types';
+import { IDatabaseProvider } from '@kinable/common-types';
 
 // Mock ConfigurationService
 const mockGetConfiguration = jest.fn();
@@ -96,15 +96,38 @@ describe('AIModelRouter', () => {
   const DEFAULT_OPENAI_MODEL = 'gpt-3.5-turbo';
   const DEFAULT_ANTHROPIC_MODEL = 'claude-3-haiku-20240307';
 
-  const mockOpenAIModelConfig = {
-    inputCost: 0.001, // Cost per 1K input tokens
-    outputCost: 0.002, // Cost per 1K output tokens
-    priority: 1, capabilities: ['general', 'chat'], contextSize: 4096, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100, reasoning: 3, creativity: 3, coding: 2, retrieval: true, vision: false, toolUse: false, configurable: true, maxOutputTokens: 4096
+  // Corrected mock model configurations
+  const mockOpenAIModelConfig: ModelConfig = {
+    name: 'GPT-3.5 Turbo (Mock)',
+    description: 'Mocked OpenAI model',
+    costPerMillionInputTokens: 1.00, // Was inputCost: 0.001 (per 1k)
+    costPerMillionOutputTokens: 2.00, // Was outputCost: 0.002 (per 1k)
+    contextWindow: 4096, // Was contextSize
+    maxOutputTokens: 4096,
+    capabilities: ['general', 'chat'],
+    streamingSupport: true,
+    functionCallingSupport: true, // Was functionCalling
+    visionSupport: false, // Was vision
+    active: true,
+    priority: 1,
+    rolloutPercentage: 100
+    // Removed: reasoning, creativity, coding, retrieval, toolUse, configurable (not in ModelConfig)
   };
-  const mockAnthropicModelConfig = {
-    inputCost: 0.00025, // Cost per 1K input tokens (Claude Haiku input)
-    outputCost: 0.00125, // Cost per 1K output tokens (Claude Haiku output)
-    priority: 1, capabilities: ['general', 'chat'], contextSize: 100000, streamingSupport: true, functionCalling: true, active: true, rolloutPercentage: 100, reasoning: 3, creativity: 3, coding: 1, retrieval: false, vision: true, toolUse: true, configurable: true, maxOutputTokens: 4096
+  const mockAnthropicModelConfig: ModelConfig = {
+    name: 'Claude Haiku (Mock)',
+    description: 'Mocked Anthropic model',
+    costPerMillionInputTokens: 0.25, // Was inputCost: 0.00025 (per 1k)
+    costPerMillionOutputTokens: 1.25, // Was outputCost: 0.00125 (per 1k)
+    contextWindow: 100000, // Was contextSize
+    maxOutputTokens: 4096,
+    capabilities: ['general', 'chat', 'vision'], // vision was true
+    streamingSupport: true,
+    functionCallingSupport: true, // Was functionCalling
+    visionSupport: true, // Was vision
+    active: true,
+    priority: 1,
+    rolloutPercentage: 100
+    // Removed: reasoning, creativity, coding, retrieval, toolUse, configurable (not in ModelConfig)
   };
 
 
@@ -151,12 +174,16 @@ describe('AIModelRouter', () => {
 
     mockGetConfiguration.mockReset();
     mockGetConfiguration.mockResolvedValue({
-      version: '1.0.0', updatedAt: Date.now(),
+      configVersion: '1.0.0-test',
+      schemaVersion: '1.0.0-test',
+      updatedAt: new Date().toISOString(),
       providers: {
         openai: {
-          active: true, keyVersion: 1, secretId: 'mock-openai-secret-from-config',
+          active: true,
+          keyVersion: 1,
+          secretId: `kinable-dev/${MOCK_AWS_CLIENT_REGION}/openai/api-key`,
           defaultModel: DEFAULT_OPENAI_MODEL,
-          endpoints: { default: { url: 'https://api.openai.com/v1', region: 'global', priority: 1, active: true } },
+          endpoints: { default: { url: 'https://api.openai.com/v1', region: MOCK_AWS_CLIENT_REGION, priority: 1, active: true } },
           models: { [DEFAULT_OPENAI_MODEL]: mockOpenAIModelConfig },
           rateLimits: { rpm: 100, tpm: 100000 },
           retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
@@ -164,9 +191,11 @@ describe('AIModelRouter', () => {
           rolloutPercentage: 100
         },
         anthropic: {
-          active: true, keyVersion: 1, secretId: MOCK_ANTHROPIC_SECRET_ID,
+          active: true,
+          keyVersion: 1,
+          secretId: `kinable-dev/${MOCK_AWS_CLIENT_REGION}/anthropic/api-key`,
           defaultModel: DEFAULT_ANTHROPIC_MODEL,
-          endpoints: { default: { url: 'https://api.anthropic.com/v1', region: 'global', priority: 2, active: true } },
+          endpoints: { default: { url: 'https://api.anthropic.com/v1', region: MOCK_AWS_CLIENT_REGION, priority: 1, active: true } },
           models: { [DEFAULT_ANTHROPIC_MODEL]: mockAnthropicModelConfig },
           rateLimits: { rpm: 100, tpm: 100000 },
           retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
@@ -181,7 +210,7 @@ describe('AIModelRouter', () => {
         defaultModel: DEFAULT_OPENAI_MODEL
       },
       featureFlags: {}
-    } as ProviderConfiguration);
+    } as AiServiceConfiguration);
     
     router = new AIModelRouter(
       mockConfigServiceInstance,
@@ -247,10 +276,10 @@ describe('AIModelRouter', () => {
 
     // Make Anthropic cheaper for this test
     const config = JSON.parse(JSON.stringify(await mockConfigServiceInstance.getConfiguration()));
-    config.providers.openai.models[DEFAULT_OPENAI_MODEL].inputCost = 0.002;
-    config.providers.openai.models[DEFAULT_OPENAI_MODEL].outputCost = 0.003;
-    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].inputCost = 0.0001;
-    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].outputCost = 0.0005;
+    config.providers.openai.models[DEFAULT_OPENAI_MODEL].costPerMillionInputTokens = 2.0;
+    config.providers.openai.models[DEFAULT_OPENAI_MODEL].costPerMillionOutputTokens = 3.0;
+    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].costPerMillionInputTokens = 0.25;
+    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].costPerMillionOutputTokens = 1.25;
     mockGetConfiguration.mockReset();
     mockGetConfiguration.mockResolvedValue(config);
 
@@ -389,10 +418,10 @@ describe('AIModelRouter', () => {
     
     // Make sure Anthropic is at least slightly cheaper for the test
     const config = JSON.parse(JSON.stringify(await mockConfigServiceInstance.getConfiguration()));
-    config.providers.openai.models[DEFAULT_OPENAI_MODEL].inputCost = 0.002;
-    config.providers.openai.models[DEFAULT_OPENAI_MODEL].outputCost = 0.003;
-    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].inputCost = 0.00025;
-    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].outputCost = 0.00125;
+    config.providers.openai.models[DEFAULT_OPENAI_MODEL].costPerMillionInputTokens = 2.0;
+    config.providers.openai.models[DEFAULT_OPENAI_MODEL].costPerMillionOutputTokens = 3.0;
+    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].costPerMillionInputTokens = 0.25;
+    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].costPerMillionOutputTokens = 1.25;
     mockGetConfiguration.mockReset();
     mockGetConfiguration.mockResolvedValue(config);
 
@@ -416,10 +445,10 @@ describe('AIModelRouter', () => {
 
     // Make Anthropic cheaper but set it to fail
     const config = JSON.parse(JSON.stringify(await mockConfigServiceInstance.getConfiguration()));
-    config.providers.openai.models[DEFAULT_OPENAI_MODEL].inputCost = 0.002;
-    config.providers.openai.models[DEFAULT_OPENAI_MODEL].outputCost = 0.003;
-    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].inputCost = 0.0001;
-    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].outputCost = 0.0005;
+    config.providers.openai.models[DEFAULT_OPENAI_MODEL].costPerMillionInputTokens = 2.0;
+    config.providers.openai.models[DEFAULT_OPENAI_MODEL].costPerMillionOutputTokens = 3.0;
+    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].costPerMillionInputTokens = 0.25;
+    config.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].costPerMillionOutputTokens = 1.25;
     mockGetConfiguration.mockReset();
     mockGetConfiguration.mockResolvedValue(config);
 
@@ -568,8 +597,8 @@ describe('AIModelRouter', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe('TIMEOUT');
-      expect(result.detail).toContain('All candidate providers failed to generate a response');
-      expect(result.detail).toContain('openai(added_to_candidates)');
+      const expectedDetail = 'All candidate providers failed to generate a response. Attempted/Considered: openai(auth)';
+      expect(result.detail).toBe(expectedDetail);
     }
   });
 
@@ -631,29 +660,28 @@ describe('AIModelRouter', () => {
 
     // Create a new test configuration with a third dummy provider that's the cheapest
     const specificConfig = JSON.parse(JSON.stringify(await mockConfigServiceInstance.getConfiguration()));
-    specificConfig.providers.openai.models[DEFAULT_OPENAI_MODEL].inputCost = 0.002;
-    specificConfig.providers.openai.models[DEFAULT_OPENAI_MODEL].outputCost = 0.003;
-    specificConfig.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].inputCost = 0.00025;
-    specificConfig.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].outputCost = 0.00125;
+    specificConfig.providers.openai.models[DEFAULT_OPENAI_MODEL].costPerMillionInputTokens = 2.0;
+    specificConfig.providers.openai.models[DEFAULT_OPENAI_MODEL].costPerMillionOutputTokens = 3.0;
+    delete specificConfig.providers.openai.models[DEFAULT_OPENAI_MODEL].inputCost;
+    delete specificConfig.providers.openai.models[DEFAULT_OPENAI_MODEL].outputCost;
+
+    specificConfig.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].costPerMillionInputTokens = 0.25;
+    specificConfig.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].costPerMillionOutputTokens = 1.25;
+    delete specificConfig.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].inputCost;
+    delete specificConfig.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].outputCost;
     
-    const dummyModelConfig = { 
-      inputCost: 0.0001, 
-      outputCost: 0.0001, 
-      priority: 1, 
-      capabilities: [], 
-      contextSize: 1000, 
+    const dummyModelConfig: ModelConfig = { 
+      name: "Dummy Model",
+      description: "A cheap dummy model for testing.",
+      costPerMillionInputTokens: 0.1,
+      costPerMillionOutputTokens: 0.1,
+      contextWindow: 1000,
+      maxOutputTokens: 1000,
+      capabilities: ["general", "chat"],
       streamingSupport: true, 
-      functionCalling: false, 
-      active: true, 
-      rolloutPercentage: 100, 
-      reasoning: 1, 
-      creativity: 1, 
-      coding: 1, 
-      retrieval: false, 
-      vision: false, 
-      toolUse: false, 
-      configurable: true, 
-      maxOutputTokens: 1000 
+      functionCallingSupport: false,
+      visionSupport: false,
+      active: true,
     };
     
     specificConfig.providers['dummy'] = {
@@ -718,4 +746,69 @@ describe('AIModelRouter', () => {
     mockIsRequestAllowed.mockImplementation(() => Promise.resolve(true));
   });
 
+  describe('Configuration and Error Handling', () => {
+    const getBaseConfig = async (): Promise<AiServiceConfiguration> => {
+      const defaultConfig = await mockConfigServiceInstance.getConfiguration();
+      return JSON.parse(JSON.stringify(defaultConfig));
+    };
+
+    beforeEach(() => {
+      if (router) {
+        router.clearProviders();
+      }
+    });
+
+    test('should throw error for unconfigured provider', async () => {
+      const config = await getBaseConfig();
+      if (config.providers.openai) {
+        delete config.providers.openai;
+      }
+      if (config.providers.anthropic) {
+        config.providers.anthropic.active = false;
+      }
+      Object.keys(config.providers).forEach(providerKey => {
+        if (providerKey !== 'openai' && config.providers[providerKey]) {
+            config.providers[providerKey].active = false;
+        }
+      });
+
+      mockGetConfiguration.mockResolvedValue(config as AiServiceConfiguration);
+
+      if (router) router.clearProviders();
+
+      const result = await router.routeRequest({ prompt: 'test unconfigured', preferredProvider: 'openai', context: mockContext });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('TIMEOUT');
+        expect(result.detail).toMatch(/No suitable active provider available/i);
+      }
+    });
+
+    test('should throw error for inactive provider', async () => {
+      const config = await getBaseConfig();
+      
+      if (config.providers.openai) {
+        config.providers.openai.active = false;
+      }
+      if (config.providers.anthropic) {
+        config.providers.anthropic.active = false;
+      }
+      Object.keys(config.providers).forEach(providerKey => {
+        if (config.providers[providerKey]) {
+            config.providers[providerKey].active = false;
+        }
+      });
+
+      mockGetConfiguration.mockResolvedValue(config);
+
+      const result = await router.routeRequest({ prompt: 'test inactive', preferredProvider: 'openai', context: mockContext });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('TIMEOUT');
+        expect(result.detail).toMatch(/No suitable active provider available/i);
+      }
+    });
+
+    test.todo('should throw error for unknown provider type in config - investigate test reliability');
+  });
 });

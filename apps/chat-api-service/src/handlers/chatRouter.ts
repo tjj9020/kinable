@@ -8,11 +8,11 @@ import { ConfigurationService } from '../ai/ConfigurationService';
 // Environment variables - use names exactly as defined in sam.yaml
 const PROVIDER_CONFIG_TABLE_ENV = process.env.PROVIDER_CONFIG_TABLE_NAME;
 const ACTIVE_CONFIG_ID_ENV = process.env.ACTIVE_CONFIG_ID;
-const OPENAI_API_KEY_SECRET_ENV = process.env.OPENAI_API_KEY_SECRET_ID;
+// const OPENAI_API_KEY_SECRET_ENV = process.env.OPENAI_API_KEY_SECRET_ID; // This seems unused if providers have their own secretId - REMOVING
 const SERVICE_REGION_ENV = process.env.AWS_REGION || 'us-east-2'; // Default if not set by Lambda environment
+const STAGE_ENV = process.env.STAGE || 'kinable-dev'; // Added for routerStage, with a default
 
 // Initialize clients and services once per Lambda cold start if possible
-// For simplicity in this example, they are initialized per invocation, but can be moved outside handler
 let dbProvider: DynamoDBProvider;
 let configService: ConfigurationService;
 let router: AIModelRouter;
@@ -49,28 +49,33 @@ export const handler = async (
 
     // --- Dependency Initialization --- 
     // Check for required environment variables for AI services
-    if (!PROVIDER_CONFIG_TABLE_ENV || !ACTIVE_CONFIG_ID_ENV || !OPENAI_API_KEY_SECRET_ENV) {
-      console.error('Missing required environment variables for AI services configuration. Check PROVIDER_CONFIG_TABLE_NAME, ACTIVE_CONFIG_ID, OPENAI_API_KEY_SECRET_ID.');
-      return createErrorResponse(500, 'Internal server configuration error', 'CONFIG_ERROR');
+    if (!PROVIDER_CONFIG_TABLE_ENV || !ACTIVE_CONFIG_ID_ENV) {
+      console.error('Missing required environment variables: PROVIDER_CONFIG_TABLE_NAME or ACTIVE_CONFIG_ID');
+      // Return an internal server error
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: 'Internal server configuration error.' })
+      };
     }
 
-    // Initialize provider and services if not already initialized (for Lambda cold starts)
-    if (!dbProvider) { 
+    // Initialize DBProvider if not already done
+    if (!dbProvider) {
       dbProvider = new DynamoDBProvider(SERVICE_REGION_ENV);
     }
-    if (!configService) { 
+
+    // Initialize ConfigurationService if not already done
+    if (!configService) {
       configService = new ConfigurationService(
-        dbProvider,
-        PROVIDER_CONFIG_TABLE_ENV,
+        dbProvider, 
+        PROVIDER_CONFIG_TABLE_ENV, 
         SERVICE_REGION_ENV,
         ACTIVE_CONFIG_ID_ENV
       );
     }
-    if (!router) { 
-      router = new AIModelRouter(
-        configService,
-        SERVICE_REGION_ENV
-      );
+    
+    // Initialize AIModelRouter if not already done
+    if (!router) {
+      router = new AIModelRouter(configService, SERVICE_REGION_ENV, STAGE_ENV);
     }
     // --- End Dependency Initialization ---
     

@@ -21,15 +21,27 @@ describe("CircuitBreakerManager", () => {
     const DEFAULT_HALF_OPEN_SUCCESS_THRESHOLD = 2;
     const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7;
 
+    let consoleErrorSpy: jest.SpyInstance;
+    let consoleWarnSpy: jest.SpyInstance;
+    let consoleLogSpy: jest.SpyInstance;
+
     beforeEach(() => {
         ddbMock.reset(); // Reset mocks before each test
         // Correctly instantiate DynamoDBDocumentClient
         manager = new CircuitBreakerManager(DynamoDBDocumentClient.from(baseDdbClient), tableName);
         jest.spyOn(Date, 'now').mockImplementation(() => now); // Mock Date.now()
+
+        // Suppress console messages for all tests unless a specific test re-spies
+        consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     });
 
     afterEach(() => {
         jest.restoreAllMocks(); // Restore Date.now() and other mocks
+        consoleErrorSpy.mockRestore();
+        consoleWarnSpy.mockRestore();
+        consoleLogSpy.mockRestore();
     });
 
     describe("constructor", () => {
@@ -71,10 +83,12 @@ describe("CircuitBreakerManager", () => {
                 providerRegion,
                 status: 'CLOSED',
                 consecutiveFailures: 0,
+                currentHalfOpenSuccesses: 0,
                 totalFailures: 0,
                 totalSuccesses: 1,
                 lastStateChangeTimestamp: now - 1000,
                 ttl: Math.floor(now / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: mockHealthState });
             const result = await manager.getProviderHealth(providerRegion);
@@ -94,9 +108,11 @@ describe("CircuitBreakerManager", () => {
                 providerRegion,
                 status: 'CLOSED',
                 consecutiveFailures: 0,
+                currentHalfOpenSuccesses: 0,
                 totalFailures: 0,
                 totalSuccesses: 1,
                 lastStateChangeTimestamp: now,
+                totalLatencyMs: 0,
                 // TTL will be recalculated by the method
             };
             ddbMock.on(PutCommand).resolves({});
@@ -115,10 +131,12 @@ describe("CircuitBreakerManager", () => {
                 providerRegion,
                 status: 'CLOSED',
                 consecutiveFailures: 0,
+                currentHalfOpenSuccesses: 0,
                 totalFailures: 0,
                 totalSuccesses: 1,
                 lastStateChangeTimestamp: now,
                 ttl: futureTtl,
+                totalLatencyMs: 0,
             };
             ddbMock.on(PutCommand).resolves({});
             await manager.updateProviderHealth(healthState);
@@ -134,9 +152,11 @@ describe("CircuitBreakerManager", () => {
                 providerRegion,
                 status: 'CLOSED',
                 consecutiveFailures: 0,
+                currentHalfOpenSuccesses: 0,
                 totalFailures: 0,
                 totalSuccesses: 1,
                 lastStateChangeTimestamp: now,
+                totalLatencyMs: 0,
             };
             const dbError = new Error("DynamoDB put error");
             ddbMock.on(PutCommand).rejects(dbError);
@@ -162,6 +182,7 @@ describe("CircuitBreakerManager", () => {
                 openedTimestamp: undefined, // Not opened yet
                 lastFailureTimestamp: undefined, // No failures yet
                 ttl: Math.floor(now / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
 
             expect(ddbMock).toHaveReceivedCommandTimes(GetCommand, 1);
@@ -188,6 +209,7 @@ describe("CircuitBreakerManager", () => {
                 currentHalfOpenSuccesses: 0,
                 lastStateChangeTimestamp: now - 1000,
                 ttl: Math.floor((now - 1000) / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -219,6 +241,7 @@ describe("CircuitBreakerManager", () => {
                 lastStateChangeTimestamp: now - 1000,
                 openedTimestamp: now - 10000, // Was open before going half-open
                 ttl: Math.floor((now - 1000) / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -246,6 +269,7 @@ describe("CircuitBreakerManager", () => {
                 lastStateChangeTimestamp: now - 1000,
                 openedTimestamp: now - 10000,
                 ttl: Math.floor((now - 1000) / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -282,6 +306,7 @@ describe("CircuitBreakerManager", () => {
                 openedTimestamp: now - 10000,
                 lastFailureTimestamp: now - 1000,
                 ttl: Math.floor((now - 1000) / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -338,6 +363,7 @@ describe("CircuitBreakerManager", () => {
                 lastStateChangeTimestamp: now - 1000,
                 lastFailureTimestamp: now - 1000,
                 ttl: Math.floor((now - 1000) / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -366,6 +392,7 @@ describe("CircuitBreakerManager", () => {
                 lastStateChangeTimestamp: now - 1000,
                 lastFailureTimestamp: now - 1000,
                 ttl: Math.floor((now - 1000) / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -398,6 +425,7 @@ describe("CircuitBreakerManager", () => {
                 lastStateChangeTimestamp: now - 1000,
                 openedTimestamp: now - 10000, // Original open time
                 ttl: Math.floor((now - 1000) / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -432,6 +460,7 @@ describe("CircuitBreakerManager", () => {
                 openedTimestamp: initialOpenedTimestamp,
                 lastFailureTimestamp: now - 1000,
                 ttl: Math.floor((now - 1000) / 1000) + DEFAULT_TTL_SECONDS,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -477,7 +506,7 @@ describe("CircuitBreakerManager", () => {
         it("should allow request if status is CLOSED", async () => {
             const initialState: ProviderHealthState = {
                 providerRegion, status: 'CLOSED', consecutiveFailures: 0, totalFailures: 0, totalSuccesses: 1,
-                currentHalfOpenSuccesses: 0, lastStateChangeTimestamp: now -1000, ttl: 0
+                currentHalfOpenSuccesses: 0, lastStateChangeTimestamp: now -1000, ttl: 0, totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
 
@@ -491,7 +520,7 @@ describe("CircuitBreakerManager", () => {
                 providerRegion, status: 'OPEN', consecutiveFailures: DEFAULT_FAILURE_THRESHOLD, 
                 totalFailures: 3, totalSuccesses: 0, currentHalfOpenSuccesses: 0, 
                 openedTimestamp: now - (DEFAULT_COOLDOWN_PERIOD_MS / 2), // Cooldown not passed
-                lastStateChangeTimestamp: now - 1000, ttl: 0
+                lastStateChangeTimestamp: now - 1000, ttl: 0, totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             jest.spyOn(console, 'log');
@@ -507,7 +536,7 @@ describe("CircuitBreakerManager", () => {
                 providerRegion, status: 'OPEN', consecutiveFailures: DEFAULT_FAILURE_THRESHOLD, 
                 totalFailures: 3, totalSuccesses: 0, currentHalfOpenSuccesses: 0, 
                 openedTimestamp: now - DEFAULT_COOLDOWN_PERIOD_MS - 1000, // Cooldown HAS passed
-                lastStateChangeTimestamp: now - DEFAULT_COOLDOWN_PERIOD_MS, ttl: 0
+                lastStateChangeTimestamp: now - DEFAULT_COOLDOWN_PERIOD_MS, ttl: 0, totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             ddbMock.on(PutCommand).resolves({});
@@ -534,7 +563,8 @@ describe("CircuitBreakerManager", () => {
         it("should allow request if status is HALF_OPEN", async () => {
             const initialState: ProviderHealthState = {
                 providerRegion, status: 'HALF_OPEN', consecutiveFailures: 0, totalFailures: 3, totalSuccesses: 0, 
-                currentHalfOpenSuccesses: 0, lastStateChangeTimestamp: now -1000, ttl: 0, openedTimestamp: now - 2000
+                currentHalfOpenSuccesses: 0, lastStateChangeTimestamp: now -1000, ttl: 0, openedTimestamp: now - 2000,
+                totalLatencyMs: 0,
             };
             ddbMock.on(GetCommand).resolves({ Item: initialState });
             jest.spyOn(console, 'log');
@@ -550,11 +580,12 @@ describe("CircuitBreakerManager", () => {
                 providerRegion, status: 'UNKNOWN_STATUS', // Deliberately invalid status
             } as any; // Cast to any to bypass type checking for test
             ddbMock.on(GetCommand).resolves({ Item: initialState });
-            jest.spyOn(console, 'warn');
+            const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {}); // Spy and suppress output
 
             const allowed = await manager.isRequestAllowed(providerRegion);
             expect(allowed).toBe(false);
-            expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("Unknown status for TestProvider#test-region-1: UNKNOWN_STATUS. Blocking request."));
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Unknown status for TestProvider#test-region-1: UNKNOWN_STATUS. Blocking request."));
+            warnSpy.mockRestore(); // Restore the original console.warn
         });
     });
 }); 

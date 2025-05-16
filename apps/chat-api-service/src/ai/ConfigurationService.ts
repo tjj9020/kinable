@@ -1,7 +1,9 @@
 import { 
-  ProviderConfiguration, 
+  AiServiceConfiguration,
+  ModelConfig,
+  ProviderConfig,
   DEFAULT_ROUTING_WEIGHTS,
-  validateConfiguration,
+  validateAiServiceConfiguration,
   IDatabaseProvider
 } from '@kinable/common-types';
 
@@ -14,7 +16,7 @@ const PROVIDER_CONFIG_TABLE_KEY_NAME = 'configId';
  */
 export class ConfigurationService {
   // private static instance: ConfigurationService; // Removing singleton for now
-  private config: ProviderConfiguration;
+  private config: AiServiceConfiguration;
   private lastFetched: number = 0;
   private cacheTtlMs: number = 60000; // 1 minute
 
@@ -56,7 +58,7 @@ export class ConfigurationService {
    * Get the current configuration
    * In production, this would check cache freshness and fetch from DynamoDB if needed
    */
-  public async getConfiguration(): Promise<ProviderConfiguration> {
+  public async getConfiguration(): Promise<AiServiceConfiguration> {
     const now = Date.now();
     
     // Check if cache is still valid
@@ -70,18 +72,20 @@ export class ConfigurationService {
       const newConfig = await this.fetchConfiguration();
       
       // Validate configuration
-      const errors = validateConfiguration(newConfig);
+      const errors = validateAiServiceConfiguration(newConfig);
       if (errors.length > 0) {
-        console.error('Configuration validation failed:', errors);
-        // Keep using the current config if the new one is invalid
+        console.error(`Configuration validation failed for '${this.activeConfigId}':`, errors.join('; '));
+        // Decide on error handling: throw, or use stale/default. Current behavior is use stale.
+        console.warn(`Using stale/default configuration for '${this.activeConfigId}' due to validation errors.`);
       } else {
         this.config = newConfig;
       }
       
       this.lastFetched = now;
     } catch (error) {
-      console.error('Failed to fetch configuration:', error);
-      // Continue using the current configuration
+      console.error(`Failed to fetch or validate configuration '${this.activeConfigId}':`, error);
+      // Continue using the current (possibly default) configuration
+      console.warn(`Using stale/default configuration for '${this.activeConfigId}' due to fetch/validation error.`);
     }
     
     return this.config;
@@ -99,7 +103,7 @@ export class ConfigurationService {
    * Mock configuration fetch
    * In production, this would fetch from DynamoDB
    */
-  private async fetchConfiguration(): Promise<ProviderConfiguration> {
+  private async fetchConfiguration(): Promise<AiServiceConfiguration> {
     // Simulate network delay
     // await new Promise(resolve => setTimeout(resolve, 100)); // Keep for testing if needed, but primary path is DB
     
@@ -107,18 +111,23 @@ export class ConfigurationService {
     // return this.getDefaultConfiguration();
 
     try {
-      const configItem = await this.dbProvider.getItem<{ configData: ProviderConfiguration }>(
+      const fetchedItem = await this.dbProvider.getItem<AiServiceConfiguration>(
         this.providerConfigTableName,
         PROVIDER_CONFIG_TABLE_KEY_NAME, // keyAttributeName: 'configId'
         this.activeConfigId,             // logicalId: Use the member variable
         this.serviceRegion            // userRegion: Using serviceRegion, assuming config is not user-region specific in its key
       );
 
-      if (configItem && configItem.configData) {
+      if (fetchedItem) {
+        // fetchedItem is the AiServiceConfiguration object (excluding configId which was the key)
         console.log(`Successfully fetched configuration '${this.activeConfigId}' from ${this.providerConfigTableName}`);
-        // The actual ProviderConfiguration object is expected to be nested under a property, e.g., 'configData'
-        // Adjust if the entire item IS the ProviderConfiguration
-        return configItem.configData as ProviderConfiguration;
+        // Perform a basic check for a core property to ensure it's not just an empty object
+        if (fetchedItem.providers && fetchedItem.configVersion) {
+            return fetchedItem;
+        } else {
+            console.warn(`Fetched item for '${this.activeConfigId}' from ${this.providerConfigTableName} is missing core properties. Using default.`);
+            return this.getDefaultConfiguration();
+        }
       } else {
         console.warn(`Configuration '${this.activeConfigId}' not found in ${this.providerConfigTableName}. Using default configuration.`);
         return this.getDefaultConfiguration();
@@ -134,92 +143,47 @@ export class ConfigurationService {
    * Get the default configuration
    * This is used as a fallback if fetching fails
    */
-  private getDefaultConfiguration(): ProviderConfiguration {
+  private getDefaultConfiguration(): AiServiceConfiguration {
+    // This default needs to be more complete and match AiServiceConfiguration and ModelConfig
+    const defaultOpenAiModel: ModelConfig = {
+        name: "GPT-3.5 Turbo (Default)",
+        description: "Default fallback model.",
+        costPerMillionInputTokens: 0.50,
+        costPerMillionOutputTokens: 1.50,
+        contextWindow: 4096,
+        maxOutputTokens: 4096,
+        capabilities: ["general", "chat"],
+        streamingSupport: true,
+        functionCallingSupport: true,
+        visionSupport: false,
+        active: true,
+    };
+
+    const defaultOpenAiProvider: ProviderConfig = {
+        active: true,
+        secretId: "{env}-{region}-openai-default-api-key", // Corrected templated secretId for default
+        defaultModel: "gpt-3.5-turbo-default",
+        models: {
+            "gpt-3.5-turbo-default": defaultOpenAiModel
+        },
+        // Fill other optional ProviderConfig fields if necessary for default behavior
+        rateLimits: { rpm: 50, tpm: 50000 } // Added example rate limits
+    };
+
     return {
-      version: '1.0.0',
-      updatedAt: Date.now(),
+      configVersion: '1.0.0', // Updated configVersion to '1.0.0'
+      schemaVersion: '1.0.0', // Matches current schema version
+      updatedAt: new Date(0).toISOString(), // Epoch timestamp
       providers: {
-        openai: {
-          active: true,
-          keyVersion: 1,
-          secretId: 'kinable/openai/api-key',
-          endpoints: {
-            'us-east-2': {
-              url: 'https://api.openai.com/v1',
-              region: 'us-east-2',
-              priority: 1,
-              active: true
-            }
-          },
-          models: {
-            'gpt-4o': {
-              inputCost: 0.01,
-              outputCost: 0.03,
-              priority: 1,
-              capabilities: ['reasoning', 'creativity', 'coding', 'function_calling'],
-              contextSize: 128000,
-              streamingSupport: true,
-              functionCalling: true,
-              active: true,
-              rolloutPercentage: 100
-            },
-            'gpt-4': {
-              inputCost: 0.01,
-              outputCost: 0.03,
-              priority: 2,
-              capabilities: ['reasoning', 'creativity', 'coding', 'function_calling'],
-              contextSize: 8192,
-              streamingSupport: true,
-              functionCalling: true,
-              active: true,
-              rolloutPercentage: 100
-            },
-            'gpt-3.5-turbo': {
-              inputCost: 0.001,
-              outputCost: 0.002,
-              priority: 3,
-              capabilities: ['basic', 'function_calling'],
-              contextSize: 4096,
-              streamingSupport: true,
-              functionCalling: true,
-              active: true,
-              rolloutPercentage: 100
-            }
-          },
-          rateLimits: {
-            rpm: 20,
-            tpm: 80000
-          },
-          retryConfig: {
-            maxRetries: 3,
-            initialDelayMs: 250,
-            maxDelayMs: 4000
-          },
-          apiVersion: 'v1',
-          rolloutPercentage: 100
-        }
+        openai: defaultOpenAiProvider
       },
       routing: {
-        rules: [
-          {
-            type: 'capability',
-            required: ['reasoning'],
-            preferredProvider: 'openai'
-          },
-          {
-            type: 'costLimit',
-            maxTokenCost: 0.002,
-            action: 'useModel',
-            model: 'gpt-3.5-turbo'
-          }
-        ],
         weights: DEFAULT_ROUTING_WEIGHTS,
         providerPreferenceOrder: ['openai'],
-        defaultModel: 'gpt-3.5-turbo'
+        defaultModel: 'gpt-3.5-turbo-default'
       },
       featureFlags: {
         enableStreaming: true,
-        enableFunctionCalling: true
       }
     };
   }
@@ -230,33 +194,35 @@ export class ConfigurationService {
    * and update the local cache.
    * @param config The new configuration to set
    */
-  public async updateConfiguration(config: ProviderConfiguration): Promise<void> {
+  public async updateConfiguration(newConfig: AiServiceConfiguration): Promise<void> {
     // Validate the new configuration
-    const errors = validateConfiguration(config);
+    const errors = validateAiServiceConfiguration(newConfig);
     if (errors.length > 0) {
-      console.error('New configuration validation failed:', errors);
-      throw new Error(`Invalid configuration: ${errors.join(', ')}`);
+      console.error('New configuration validation failed:', errors.join('; '));
+      throw new Error(`Invalid configuration: ${errors.join('; ')}`);
     }
     
-    // In production, this would write to DynamoDB
-    // For now, just update the local cache
-    // TODO: Implement writing to DynamoDB using this.dbProvider.putItem - THIS TODO IS BEING ADDRESSED
+    // Ensure updatedAt is current before saving
+    newConfig.updatedAt = new Date().toISOString();
+
+    // The item to put includes the configId (key) and spreads the newConfig attributes
     const itemToPut = {
       [PROVIDER_CONFIG_TABLE_KEY_NAME]: this.activeConfigId, // Use the activeConfigId for the item's key
-      configData: config,
-      lastUpdated: new Date().toISOString()
+      ...newConfig 
     };
 
     try {
+      // IDatabaseProvider.putItem typically expects the full item including keys.
+      // Ensure its signature matches this usage.
       await this.dbProvider.putItem(
         this.providerConfigTableName,
-        itemToPut,
+        itemToPut, // Pass the whole item
         PROVIDER_CONFIG_TABLE_KEY_NAME, // keyAttributeName
         this.serviceRegion // userRegion - assuming this is appropriate for partition key context if not globally unique
       );
       
       // Update local cache on successful DB write
-      this.config = config;
+      this.config = newConfig;
       this.lastFetched = Date.now();
       console.log(`Successfully updated configuration '${this.activeConfigId}' in ${this.providerConfigTableName} and refreshed cache.`);
 

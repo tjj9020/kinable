@@ -3,14 +3,14 @@ import {
   AIModelRequest,
   AIModelResult,
   AIModelSuccess,
-  ModelCapabilities,
   ProviderLimits,
   TokenUsage,
   AIModelError
-} from '../../../../packages/common-types/src/ai-interfaces';
+} from '@kinable/common-types';
+import { ModelConfig, ProviderConfig } from '@kinable/common-types';
 import OpenAI from 'openai';
 import { SecretsManagerClient, GetSecretValueCommand, GetSecretValueCommandOutput } from '@aws-sdk/client-secrets-manager';
-import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
+import { IDatabaseProvider } from '@kinable/common-types';
 import { standardizeError as sharedStandardizeError } from './standardizeError';
 
 interface ApiKeys {
@@ -49,6 +49,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
   private keyFetchPromise: Promise<void> | null = null;
   // @ts-ignore - Keep for future config needs
   private dbProviderForConfig: IDatabaseProvider;
+  private providerConfig: ProviderConfig;
   
   /**
    * Create a new OpenAI provider.
@@ -57,6 +58,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
    * @param awsRegion The AWS region for the Secrets Manager client.
    * @param dbProvider This dbProvider is for config/secrets, not Base's (now removed) circuit breaker
    * @param defaultModel The default model identifier to use for this provider.
+   * @param providerConfig The provider configuration.
    * @param openAIClientInstance Optional pre-configured OpenAI client instance for testing or specific use cases.
    */
   constructor(
@@ -64,13 +66,15 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
     awsRegion: string, 
     dbProvider: IDatabaseProvider, // This dbProvider is for config/secrets, not Base's (now removed) circuit breaker
     defaultModel: string = "gpt-4o", // Default to a known model
+    providerConfig: ProviderConfig, // Added providerConfig
     openAIClientInstance?: OpenAI
   ) {
-    super("openai", defaultModel /*, dbProvider -- REMOVED from super call */);
+    super("openai", defaultModel, providerConfig); // Pass providerConfig to super
     this.secretId = secretId;
     this.awsRegion = awsRegion;
     this.secretsManagerClient = new SecretsManagerClient({ region: this.awsRegion });
     this.dbProviderForConfig = dbProvider; // Store for its own needs
+    this.providerConfig = providerConfig;
 
     if (openAIClientInstance) {
       this.openaiClient = openAIClientInstance;
@@ -225,7 +229,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
         meta: {
           provider: this.providerName,
           model: response.model,
-          features: this.getModelCapabilities(model).functionCalling ? ['function_calling'] : [],
+          features: this.getModelCapabilities(model).functionCallingSupport ? ['function_calling'] : [],
           region: request.context.region,
           latency,
           timestamp: endTime 
@@ -234,19 +238,16 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       return result;
     } catch (error: any) {
       console.error(`[OpenAIModelProvider] Error calling OpenAI API (model: ${model}):`, error);
-      // Try to map OpenAI specific errors if possible, otherwise generic
       if (error instanceof OpenAI.APIError) {
-        // Use the shared standardizeError function
         return this.standardizeError(error);
       } else if (error.code === 'ECONNABORTED' || (error.message && error.message.toLowerCase().includes('timeout'))) {
         return this.standardizeError(error);
       }
-      // Fallback for other types of errors not caught by the above
       return this.createError(
         'UNKNOWN',
         `Unhandled error in OpenAI provider: ${error.message || error}`,
         error.status || 500,
-        true // Default to retryable for truly unknown errors
+        true 
       );
     }
   }
@@ -254,74 +255,27 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
   /**
    * Get the capabilities of a specific OpenAI model
    */
-  getModelCapabilities(modelName: string): ModelCapabilities {
-    // In a real implementation, this would be driven by configuration
-    switch (modelName) {
-      case 'gpt-4o':
-        return {
-          reasoning: 5,
-          creativity: 5,
-          coding: 5,
-          retrieval: false,
-          functionCalling: true,
-          contextSize: 128000,
-          streamingSupport: true,
-          vision: true,
-          inputCost: 0.01,
-          outputCost: 0.03
-        };
-      case 'gpt-4':
-        return {
-          reasoning: 5,
-          creativity: 4,
-          coding: 4,
-          retrieval: false,
-          functionCalling: true,
-          contextSize: 8192,
-          streamingSupport: true,
-          vision: false,
-          inputCost: 0.01,
-          outputCost: 0.03
-        };
-      case 'gpt-3.5-turbo':
-        return {
-          reasoning: 3,
-          creativity: 3,
-          coding: 3,
-          retrieval: false,
-          functionCalling: true,
-          contextSize: 4096,
-          streamingSupport: true,
-          vision: false,
-          inputCost: 0.001,
-          outputCost: 0.002
-        };
-      default:
-        // Return a basic capabilities object for unknown models
-        return {
-          reasoning: 1,
-          creativity: 1,
-          coding: 1,
-          retrieval: false,
-          functionCalling: false,
-          contextSize: 4096,
-          streamingSupport: false,
-          vision: false,
-          inputCost: 0.01,
-          outputCost: 0.03
-        };
+  getModelCapabilities(modelName: string): ModelConfig {
+    const modelCfg = this.providerConfig.models[modelName];
+    if (!modelCfg) {
+      console.error(`[${this.providerName}] Model configuration for "${modelName}" not found.`);
+      throw new Error(`[${this.providerName}] Model configuration for "${modelName}" not found.`);
     }
+    return modelCfg;
   }
   
   /**
    * Get the rate limits for OpenAI
    */
   getProviderLimits(): ProviderLimits {
-    // In a real implementation, this would be driven by configuration
-    return {
-      rpm: 20,
-      tpm: 80000
-    };
+    const defaultLimits: ProviderLimits = { rpm: 20, tpm: 80000 }; 
+    if (this.configForProvider.rateLimits) {
+      return {
+        rpm: this.configForProvider.rateLimits.rpm ?? defaultLimits.rpm,
+        tpm: this.configForProvider.rateLimits.tpm ?? defaultLimits.tpm,
+      };
+    }
+    return defaultLimits;
   }
   
   /**
@@ -332,65 +286,12 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
   }
   
   /**
-   * Simulate a call to OpenAI API - This method will be removed
-   */
-  // private async callOpenAI(request: AIModelRequest, model: string): Promise<OpenAICompletionResponse> {
-  //   // Simulate API call delay
-  //   await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
-
-  //   // Simulate potential errors based on request
-  //   if (request.prompt.includes("error_auth")) {
-  //     const error: any = new Error("Simulated OpenAI Auth Error");
-  //     error.status = 401;
-  //     throw error;
-  //   }
-  //   if (request.prompt.includes("error_rate_limit")) {
-  //     const error: any = new Error("Simulated OpenAI Rate Limit Error");
-  //     error.status = 429;
-  //     throw error;
-  //   }
-  //   if (request.prompt.includes("error_content")) {
-  //     const error: any = new Error("Simulated OpenAI Content Filter Error");
-  //     error.status = 400;
-  //     throw error;
-  //   }
-  //   if (request.prompt.includes("error_server")) {
-  //     const error: any = new Error("Simulated OpenAI Server Error");
-  //     error.status = 500;
-  //     throw error;
-  //   }
-    
-  //   // Simulate a successful response
-  //   const completionText = `Mocked OpenAI response for model ${model} to prompt: "${request.prompt}"`;
-  //   const promptTokens = Math.ceil(request.prompt.length / 4); // Rough estimate
-  //   const completionTokens = Math.ceil(completionText.length / 4); // Rough estimate
-
-  //   return {
-  //     choices: [
-  //       {
-  //         message: {
-  //           content: completionText,
-  //         },
-  //         finish_reason: "stop",
-  //       },
-  //     ],
-  //     usage: {
-  //       prompt_tokens: promptTokens,
-  //       completion_tokens: completionTokens,
-  //       total_tokens: promptTokens + completionTokens,
-  //     },
-  //     model: model,
-  //   };
-  // }
-
-  /**
    * Standardizes an error from this provider into the common AIModelError format.
    * This method implements the abstract method from BaseAIModelProvider.
    * @param error The error object from the provider.
    * @returns An AIModelError object.
    */
   protected standardizeError(error: any): AIModelError {
-    // Call the shared standardizeError function, passing the provider name
     return sharedStandardizeError(error, this.providerName);
   }
-} 
+}

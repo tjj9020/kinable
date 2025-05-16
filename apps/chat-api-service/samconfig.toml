@@ -1,10 +1,10 @@
 version = 0.1
 [default.deploy.parameters]
-stack_name = "kinable-dev"
+stack_name = "kinable-test"
 resolve_s3 = true
-s3_prefix = "kinable-dev"
+s3_prefix = "kinable-test"
 region = "us-east-2"
 profile = "kinable-dev"
 confirm_changeset = true
-capabilities = "CAPABILITY_IAM"
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
 image_repositories = []

@@ -88,6 +88,8 @@ Resources:
             Method: get
             Auth:
               Authorizer: JwtAuthorizer
+    Metadata:
+      BuildMethod: makefile
 
   KinableUserPool:
     Type: AWS::Cognito::UserPool
@@ -190,6 +192,9 @@ Resources:
           COGNITO_CLIENT_ID: !Ref KinableUserPoolClient
           FAMILIES_TABLE_NAME: !Ref FamiliesTable
           PROFILES_TABLE_NAME: !Ref ProfilesTable
+          STAGE: !Ref AWS::StackName
+    Metadata:
+      BuildMethod: makefile
 
   FamiliesTable:
     Type: AWS::DynamoDB::GlobalTable
@@ -310,30 +315,32 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:Query
-                  - dynamodb:UpdateItem
                   - dynamodb:PutItem
+                  - dynamodb:UpdateItem
                 Resource:
                   - !GetAtt ProviderConfigTable.Arn
+                  - !Sub "${ProviderConfigTable.Arn}/index/*"
+                  - !GetAtt ProfilesTable.Arn
+                  - !Sub "${ProfilesTable.Arn}/index/*"
                   - !GetAtt ProviderHealthTable.Arn
+                  - !Sub "${ProviderHealthTable.Arn}/index/*"
         - PolicyName: ChatRouterSecretsManagerPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
+                Action: secretsmanager:GetSecretValue
                 Resource:
-                  # For OpenAI
-                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:kinable-dev-${AWS::Region}-openai-api-key-*"
-                  # For Anthropic
-                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:kinable-dev-${AWS::Region}-anthropic-api-key-*"
-                  # Or, if you prefer to make it more dynamic with the current stack name:
-                  # - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}-${AWS::Region}-openai-api-key-*"
-                  
+                  # Secrets Manager always adds a random suffix to the end of secret names in the ARN
+                  # Using "*" to match any suffix for reliable matching across environments
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}-${AWS::Region}-anthropic-api-key-*"
+                  - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AWS::StackName}-${AWS::Region}-openai-api-key-*"
+
   # Chat router Lambda function
   ChatRouterFunction:
     Type: AWS::Serverless::Function
     Properties:
+      Description: "Handles chat routing and AI provider selection. Updated: $(date +%s)"
       CodeUri: .
       Handler: dist/src/handlers/chatRouter.handler
       Runtime: nodejs20.x
@@ -345,7 +352,8 @@ Resources:
           PROVIDER_CONFIG_TABLE_NAME: !Ref ProviderConfigTable
           PROVIDER_HEALTH_TABLE: !Ref ProviderHealthTable
           OPENAI_API_KEY_SECRET_ID: !Sub "kinable-dev-${AWS::Region}-openai-api-key"
-          ACTIVE_CONFIG_ID: "E2E_TEST_CHAT_CONFIG_V1"
+          ACTIVE_CONFIG_ID: "GLOBAL_AISERVICE_CONFIG_V1"
+          STAGE: !Ref AWS::StackName
       Events:
         ChatEvent:
           Type: HttpApi
@@ -355,6 +363,8 @@ Resources:
             Method: post
             Auth:
               Authorizer: JwtAuthorizer
+    Metadata:
+      BuildMethod: makefile
 
 Outputs:
   HttpApiUrl:

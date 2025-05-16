@@ -1,5 +1,15 @@
-import { AIModelRequest, AIModelResult, ModelCapabilities, ProviderHealthStatus, ProviderLimits, AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
-// import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces'; // No longer directly needed for circuit state
+import {
+  AIModelRequest,
+  AIModelResult,
+  ProviderHealthStatus,
+  ProviderLimits,
+  AIModelError
+} from '@kinable/common-types';
+import {
+  ModelConfig,
+  ProviderConfig 
+} from '@kinable/common-types';
+// import { IDatabaseProvider } from '@kinable/common-types'; // Updated import, commented out as original
 
 // InternalCircuitState interface REMOVED
 // Circuit breaker constants REMOVED
@@ -11,10 +21,12 @@ export abstract class BaseAIModelProvider {
   // protected circuitState: InternalCircuitState | null = null; // REMOVED
   protected readonly defaultModel: string;
   protected readonly tokenBucket: { tokens: number; lastRefill: number; capacity: number; refillRate: number };
+  protected readonly configForProvider: ProviderConfig; // Store provider-specific config
 
-  constructor(providerName: string, defaultModel: string /*, dbProvider: IDatabaseProvider REMOVED */) {
+  constructor(providerName: string, defaultModel: string, providerConfig: ProviderConfig) {
     this.providerName = providerName;
     this.defaultModel = defaultModel;
+    this.configForProvider = providerConfig; // Store it
     // this.dbProvider = dbProvider; // REMOVED
     this.healthStatus = {
       available: true, // Default to true, AIModelRouter will manage actual availability via CircuitBreakerManager
@@ -36,9 +48,9 @@ export abstract class BaseAIModelProvider {
    * Retrieves the capabilities for a specific model.
    * This method should be implemented by concrete provider classes.
    * @param modelName The name of the model.
-   * @returns The capabilities of the model, or undefined if the model is not known/supported.
+   * @returns The capabilities of the model, or undefined if the model is not known/supported. - Now returns ModelConfig
    */
-  public abstract getModelCapabilities(modelName: string): ModelCapabilities;
+  public abstract getModelCapabilities(modelName: string): ModelConfig; // Return type is ModelConfig from config-schema
   protected abstract _generateResponse(request: AIModelRequest): Promise<AIModelResult>;
   protected abstract standardizeError(error: any): AIModelError;
 
@@ -99,24 +111,41 @@ export abstract class BaseAIModelProvider {
     // This method now only checks capabilities.
 
     const modelName = request.preferredModel || this.defaultModel;
-    const capabilities = this.getModelCapabilities(modelName);
+    let modelConfig: ModelConfig | undefined;
 
-    if (!capabilities || Object.keys(capabilities).length === 0) {
-      console.warn(`[${this.providerName}] Model ${modelName} is unknown or has no capabilities defined.`);
+    try {
+      modelConfig = this.getModelCapabilities(modelName);
+    } catch (error) {
+      console.warn(`[${this.providerName}] Error fetching model capabilities for ${modelName} in canFulfill:`, error);
+      return false; // If getModelCapabilities throws (e.g. model not found), then cannot fulfill.
+    }
+
+    if (!modelConfig) {
+      console.warn(`[${this.providerName}] Model ${modelName} configuration not found or model is inactive (via getModelCapabilities).`);
+      return false;
+    }
+
+    // Added check for modelConfig.active in line with how AIModelRouter filters models
+    if (!modelConfig.active) {
+      console.warn(`[${this.providerName}] Model ${modelName} is not active.`);
       return false;
     }
 
     if (request.requiredCapabilities && request.requiredCapabilities.length > 0) {
+      if (!modelConfig.capabilities || modelConfig.capabilities.length === 0) {
+        console.warn(`[${this.providerName}] Model ${modelName} has no capabilities defined in its configuration.`);
+        return false;
+      }
       for (const reqCap of request.requiredCapabilities) {
-        if (!(capabilities as any)[reqCap]) { 
-          console.warn(`[${this.providerName}] Model ${modelName} missing required capability: ${reqCap}`);
+        if (!modelConfig.capabilities.includes(reqCap)) { 
+          console.warn(`[${this.providerName}] Model ${modelName} missing required capability from config: ${reqCap}`);
           return false;
         }
       }
     }
 
-    if (request.tools && request.tools.length > 0 && !capabilities.functionCalling) {
-      console.warn(`[${this.providerName}] Model ${modelName} does not support function calling, but tools were requested.`);
+    if (request.tools && request.tools.length > 0 && !modelConfig.functionCallingSupport) {
+      console.warn(`[${this.providerName}] Model ${modelName} does not support function calling (tools), but tools were requested.`);
       return false;
     }
 
@@ -180,4 +209,8 @@ export abstract class BaseAIModelProvider {
 
   // _getCircuitState REMOVED
   // _updateCircuitState REMOVED
+
+  public getProviderName(): string {
+    return this.providerName;
+  }
 }

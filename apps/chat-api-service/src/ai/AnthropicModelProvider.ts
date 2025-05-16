@@ -2,17 +2,16 @@ import { BaseAIModelProvider } from './BaseAIModelProvider';
 import {
   AIModelRequest,
   AIModelResult,
-  ModelCapabilities,
   ProviderHealthStatus,
   AIModelError,
   ProviderLimits,
   TokenUsage,
   ChatMessage
-} from '../../../../packages/common-types/src/ai-interfaces';
-import { ProviderConfig } from '../../../../packages/common-types/src/config-schema';
+} from '@kinable/common-types';
+import { ModelConfig, ProviderConfig } from '@kinable/common-types';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { Anthropic } from '@anthropic-ai/sdk';
-import { IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
+import Anthropic from '@anthropic-ai/sdk';
+import { IDatabaseProvider } from '@kinable/common-types';
 import { standardizeError as sharedStandardizeError } from './standardizeError';
 
 interface ApiKeys { // Define a simple interface for the expected secret structure
@@ -22,39 +21,44 @@ interface ApiKeys { // Define a simple interface for the expected secret structu
 
 export class AnthropicModelProvider extends BaseAIModelProvider {
   private secretId: string;
-  private awsRegion: string;
-  private providerConfig: ProviderConfig | null = null;
-  private secretsManagerClient: SecretsManagerClient;
+  private readonly awsRegion: string;
   private currentApiKey?: string;
-  private anthropicClient: Anthropic | null = null;
-  private clientProvided: boolean; // If an Anthropic client is injected directly
+  private anthropicClient?: Anthropic;
   private keysLoaded: boolean = false;
-  private keyFetchPromise: Promise<void> | null = null;
+  private keyFetchPromise: Promise<string | null> | null = null;
 
   constructor(
-    secretId: string, 
-    awsRegion: string, 
-    _dbProvider: IDatabaseProvider, // Renamed to _dbProvider to indicate it's not used
-    defaultModelName: string = "claude-3-haiku-20240307"
+    secretId: string,
+    awsRegion: string,
+    _dbProvider: IDatabaseProvider,
+    defaultModelName: string,
+    providerConfig: ProviderConfig,
+    private secretsManager?: SecretsManagerClient
   ) {
-    super("anthropic", defaultModelName);
+    super('anthropic', defaultModelName, providerConfig);
     this.secretId = secretId;
     this.awsRegion = awsRegion;
-    this.secretsManagerClient = new SecretsManagerClient({ region: this.awsRegion });
-    this.clientProvided = false;
+
+    if (!this.secretsManager) {
+      this.secretsManager = new SecretsManagerClient({ region: this.awsRegion });
+    }
   }
 
-  private async _fetchAndParseApiKeys(): Promise<void> {
+  private async _fetchAndParseApiKeys(): Promise<string | null> {
+    if (!this.secretsManager) {
+      throw new Error('SecretsManagerClient not initialized in AnthropicModelProvider');
+    }
     try {
-      const commandOutput = await this.secretsManagerClient.send(
-        new GetSecretValueCommand({ SecretId: this.secretId })
-      );
+      const command = new GetSecretValueCommand({ SecretId: this.secretId });
+      console.log(`DEBUG: AnthropicProvider about to call secretsManager.send() for SecretId: ${this.secretId}`);
+      const commandOutput = await this.secretsManager.send(command);
+      console.log('DEBUG: AnthropicProvider secretsManager.send() call completed. Output:', commandOutput);
 
       if (commandOutput.SecretString) {
         const secretJson = JSON.parse(commandOutput.SecretString) as ApiKeys;
         if (secretJson.current) {
           this.currentApiKey = secretJson.current;
-          return;
+          return this.currentApiKey;
         } else {
           throw new Error('Fetched secret does not contain a "current" API key.');
         }
@@ -67,85 +71,72 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
     }
   }
 
-  private async _ensureApiKeysLoaded(): Promise<void> {
-    if (this.clientProvided) {
-      if (!this.anthropicClient) throw new Error('[AnthropicModelProvider] Client was marked as provided, but is missing.');
-      return;
-    }
-    if (this.keysLoaded && this.anthropicClient) {
-      return;
-    }
-    if (this.keyFetchPromise) {
-      await this.keyFetchPromise;
-      return;
+  private _ensureApiKeysLoaded(): Promise<string | null> {
+    if (this.keysLoaded && this.currentApiKey) {
+      return Promise.resolve(this.currentApiKey);
     }
 
-    this.keyFetchPromise = (async () => {
-      try {
-        await this._fetchAndParseApiKeys();
-        if (!this.currentApiKey) {
-          throw new Error('Current API key is missing after fetch attempt.');
+    if (!this.keyFetchPromise) {
+      this.keyFetchPromise = (async (): Promise<string | null> => {
+        try {
+          const apiKey = await this._fetchAndParseApiKeys();
+          if (!apiKey) {
+            throw new Error('Current API key is missing after fetch attempt.');
+          }
+          this.anthropicClient = this._createAnthropicClient(apiKey);
+          this.keysLoaded = true;
+          this.currentApiKey = apiKey;
+          return apiKey;
+        } catch (error) {
+          this.keysLoaded = false;
+          this.currentApiKey = undefined;
+          this.anthropicClient = undefined;
+          console.error('Error ensuring Anthropic API keys are loaded:', error);
+          throw error;
+        } finally {
+          this.keyFetchPromise = null;
         }
-        // Initialize Anthropic client with the fetched API key
-        this.anthropicClient = new Anthropic({ apiKey: this.currentApiKey });
-        this.keysLoaded = true;
-      } catch (error) {
-        this.keysLoaded = false;
-        // @ts-expect-error - Client is intentionally undefined if key loading fails
-        this.anthropicClient = undefined;
-        console.error('Error ensuring Anthropic API keys are loaded:', error);
-        throw error;
-      } finally {
-        this.keyFetchPromise = null;
-      }
-    })();
-    await this.keyFetchPromise;
-  }
-
-  public setProviderConfig(providerConfig: ProviderConfig): void {
-    this.providerConfig = providerConfig;
+      })();
+    }
+    return this.keyFetchPromise;
   }
 
   protected async _generateResponse(request: AIModelRequest): Promise<AIModelResult> {
     try {
       await this._ensureApiKeysLoaded();
-    } catch (keyLoadError: any) {
-      return this.createError(
-        'AUTH',
-        `[AnthropicModelProvider] Failed to initialize client or load API credentials: ${keyLoadError.message || keyLoadError}`,
-        500,
-        false 
-      );
-    }
-    
-    if (!this.anthropicClient) {
-        return this.createError('AUTH', '[AnthropicModelProvider] Client not initialized despite key loading attempt.', 500, false);
+    } catch (error: any) {
+      throw error;
     }
 
-    const modelToUse = request.preferredModel || this.getDefaultModel();
+    if (!this.anthropicClient) {
+      console.error('[AnthropicProvider._generateResponse] Anthropic client not initialized after attempting to load keys.');
+      return this.createError('UNKNOWN', 'Anthropic client not initialized', 500, false);
+    }
+
+    const { prompt, context, preferredModel, maxTokens, temperature, conversationId: _conversationId, tools: _tools } = request;
     
     const startTime = Date.now();
     let latencyMs = 0;
 
     try {
       const messages: Anthropic.Messages.MessageParam[] = [];
-      if (request.context.conversationHistory && request.context.conversationHistory.length > 0) {
-        request.context.conversationHistory.forEach((histMsg: ChatMessage) => {
+      if (context.conversationHistory && context.conversationHistory.length > 0) {
+        context.conversationHistory.forEach((histMsg: ChatMessage) => {
           if (histMsg.role === 'user' || histMsg.role === 'assistant') {
             messages.push({ role: histMsg.role, content: histMsg.content });
           }
         });
       }
-      messages.push({ role: 'user', content: request.prompt });
+      messages.push({ role: 'user', content: prompt });
 
       const anthropicRequestParams: Anthropic.Messages.MessageCreateParams = {
-        model: modelToUse,
+        model: preferredModel || this.getDefaultModel(),
         messages: messages,
-        max_tokens: request.maxTokens || 1024, 
-        temperature: request.temperature,
+        max_tokens: maxTokens || 1024, 
+        temperature: temperature,
       };
 
-      const systemPromptMessage = request.context.conversationHistory?.find(m => m.role === 'system');
+      const systemPromptMessage = context.conversationHistory?.find(m => m.role === 'system');
       if (systemPromptMessage) {
         anthropicRequestParams.system = systemPromptMessage.content;
       } else {
@@ -187,11 +178,11 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
         tokens: anthropicTokenUsage,
         meta: {
           provider: this.providerName,
-          model: response.model || modelToUse,
-          region: request.context.region,
+          model: response.model || preferredModel || this.getDefaultModel(),
+          region: context.region,
           timestamp: Date.now(),
           latency: latencyMs,
-          features: []
+          features: this.getModelCapabilities(preferredModel || this.getDefaultModel()).functionCallingSupport ? ['function_calling'] : []
         },
       };
     } catch (error: any) {
@@ -233,149 +224,97 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
     // Use the shared standardizeError function as a base
     const stdError = sharedStandardizeError(error, 'anthropic');
     
-    // If we were able to determine specific error types from the shared function, use that
+    // If sharedStandardizeError already mapped it correctly (e.g., from a structured Anthropic error type it recognizes)
     if (stdError.code !== 'UNKNOWN') {
       return stdError;
     }
-    
-    // Fallback error handling for Anthropic-specific errors
-    const errorMessage = error?.message || 'Unknown error';
-    
-    // Check error message patterns instead of instanceof checks
-    if (errorMessage.includes('rate limit') || errorMessage.includes('quota')) {
-      return {
-        ok: false,
-        code: 'RATE_LIMIT',
-        provider: 'anthropic',
-        status: error?.status || 429,
-        retryable: true,
-        detail: `Anthropic rate limit error: ${errorMessage}`
-      };
-    } else if (errorMessage.includes('authentication') || errorMessage.includes('invalid api key')) {
-      return {
-        ok: false,
-        code: 'AUTH',
-        provider: 'anthropic',
-        status: error?.status || 401,
-        retryable: false,
-        detail: `Anthropic authentication error: ${errorMessage}`
-      };
-    } else if (errorMessage.includes('permission denied') || errorMessage.includes('unauthorized')) {
-      return {
-        ok: false,
-        code: 'AUTH',
-        provider: 'anthropic',
-        status: error?.status || 403,
-        retryable: false,
-        detail: `Anthropic permission error: ${errorMessage}`
-      };
-    } else if (errorMessage.includes('not found')) {
-      return {
-        ok: false,
-        code: 'CAPABILITY',
-        provider: 'anthropic',
-        status: error?.status || 404,
-        retryable: false,
-        detail: `Anthropic resource not found: ${errorMessage}`
-      };
-    } else if (errorMessage.includes('conflict') || errorMessage.includes('unprocessable')) {
-      return {
-        ok: false,
-        code: 'CONTENT',
-        provider: 'anthropic',
-        status: error?.status || 422,
-        retryable: false,
-        detail: `Anthropic invalid request: ${errorMessage}`
-      };
-    } else if (errorMessage.includes('server error') || errorMessage.includes('500')) {
-      return {
-        ok: false,
-        code: 'UNKNOWN',
-        provider: 'anthropic',
-        status: error?.status || 500,
-        retryable: true,
-        detail: `Anthropic server error: ${errorMessage}`
-      };
+
+    const errorMessage = error?.message?.toLowerCase() || 'unknown error';
+
+    // Custom check for our specific key loading errors
+    if (errorMessage.includes('failed to load api keys') || 
+        errorMessage.includes('secret does not contain a "current" api key') || 
+        errorMessage.includes('secretstring is empty or not found') ||
+        errorMessage.includes('current api key is missing after fetch attempt') ||
+        errorMessage.includes('secretsmanagerclient not initialized')) {
+      return this.createError('AUTH', `Anthropic key/initialization error: ${error?.message || errorMessage}`, error?.status || 500, false);
+      // Using 'AUTH' as per previous expectation for PROVIDER_KEY_ERROR, and making it not retryable.
     }
     
-    // Default error case
-    return {
-      ok: false,
-      code: 'UNKNOWN',
-      provider: 'anthropic',
-      status: error?.status || 500,
-      retryable: true,
-      detail: `Anthropic error: ${errorMessage}`
-    };
+    // Fallback error handling for Anthropic-specific errors OR errors not caught by sharedStandardizeError
+    const errorStatus = error?.status; 
+
+    // Check based on status or message patterns
+    if (errorStatus === 429 || errorMessage.includes('rate limit') || errorMessage.includes('quota')) {
+      return this.createError('RATE_LIMIT', `Anthropic rate limit error: ${error?.message || errorMessage}`, errorStatus, true);
+    } else if (errorStatus === 401 || errorMessage.includes('authentication') || errorMessage.includes('invalid api key')) {
+      return this.createError('AUTH', `Anthropic authentication error: ${error?.message || errorMessage}`, errorStatus, false);
+    } else if (errorStatus === 403 || errorMessage.includes('permission denied') || errorMessage.includes('unauthorized')) {
+      return this.createError('AUTH', `Anthropic permission error: ${error?.message || errorMessage}`, errorStatus, false);
+    } else if (errorStatus === 404 || errorMessage.includes('not found')) {
+        return this.createError('CAPABILITY', `Anthropic resource not found: ${error?.message || errorMessage}`, errorStatus, false);
+    } else if (errorStatus === 400 || errorStatus === 422 || errorMessage.includes('invalid request') || errorMessage.includes('unprocessable')) {
+        // Note: Anthropic often uses 400 for various invalid requests, including content issues or malformed bodies.
+        return this.createError('CONTENT', `Anthropic invalid request: ${error?.message || errorMessage}`, errorStatus, false);
+    } else if (errorStatus && errorStatus >= 500 || errorMessage.includes('server error') || errorMessage.includes('api error') || errorMessage.includes('overloaded')) {
+        return this.createError('UNKNOWN', `Anthropic server error: ${error?.message || errorMessage}`, errorStatus, true);
+    }
+
+    // Default: if no specific mapping, use the already determined stdError (which would be code: UNKNOWN)
+    return stdError;
   }
 
   public async canFulfill(request: AIModelRequest): Promise<boolean> {
     const baseCanFulfill = await super.canFulfill(request);
     if (!baseCanFulfill) return false;
-    return this.providerConfig?.active || false;
+    return this.configForProvider.models[request.preferredModel || this.getDefaultModel()]?.active || false;
   }
 
-  public getModelCapabilities(modelName: string): ModelCapabilities {
-    // Return capabilities based on model with type assertion
-    // Different capabilities for different models
-    if (modelName.includes('opus')) {
-      return {
-        reasoning: 5,
-        creativity: 4,
-        coding: 5,
-        contextSize: 100000,
-        retrieval: false,
-        functionCalling: true,
-        streamingSupport: true,
-        vision: true,
-        toolUse: true,
-        maxOutputTokens: 4000,
-        inputCost: 0.00025,
-        outputCost: 0.00125
-      } as ModelCapabilities;
-    } else if (modelName.includes('sonnet')) {
-      return {
-        reasoning: 4,
-        creativity: 3,
-        coding: 4,
-        contextSize: 100000,
-        retrieval: false,
-        functionCalling: true,
-        streamingSupport: true,
-        vision: true,
-        toolUse: true,
-        maxOutputTokens: 4000,
-        inputCost: 0.00025,
-        outputCost: 0.00125
-      } as ModelCapabilities;
-    } else {
-      // Default capabilities for haiku or other models
-      return {
-        reasoning: 3,
-        creativity: 3,
-        coding: 3,
-        contextSize: 100000,
-        retrieval: false,
-        functionCalling: true,
-        streamingSupport: true,
-        vision: true,
-        toolUse: true,
-        maxOutputTokens: 4000,
-        inputCost: 0.00025,
-        outputCost: 0.00125
-      } as ModelCapabilities;
+  public getModelCapabilities(modelName: string): ModelConfig {
+    const modelCfg = this.configForProvider.models[modelName];
+    if (!modelCfg) {
+      console.error(`[${this.providerName}] Model configuration for "${modelName}" not found.`);
+      throw new Error(`[${this.providerName}] Model configuration for "${modelName}" not found.`);
     }
+    return modelCfg;
   }
 
   public async getProviderHealth(): Promise<ProviderHealthStatus> {
-    return super.getProviderHealth(); 
+    this.healthStatus.lastChecked = Date.now();
+    try {
+      await this._ensureApiKeysLoaded(); 
+      if (this.anthropicClient && this.keysLoaded) {
+        this.healthStatus.available = true;
+        // this.healthStatus.details = 'API keys loaded and client initialized.'; // Details not part of type
+      } else {
+        this.healthStatus.available = false;
+        // this.healthStatus.details = 'API keys not loaded or client not initialized.';
+      }
+    } catch (error: any) {
+      this.healthStatus.available = false;
+      // this.healthStatus.details = `Failed to load API keys: ${error.message}`;
+      console.error(`[AnthropicModelProvider] Error during health check key loading: ${error.message}`);
+    }
+    return { ...this.healthStatus };
   }
 
   public getProviderLimits(): ProviderLimits {
-    return this.providerConfig?.rateLimits || { rpm: 100, tpm: 40000 }; 
+    const defaultLimits: ProviderLimits = { rpm: 100, tpm: 40000 }; // Default Anthropic limits if not in config
+    if (this.configForProvider.rateLimits) {
+      return {
+        rpm: this.configForProvider.rateLimits.rpm ?? defaultLimits.rpm,
+        tpm: this.configForProvider.rateLimits.tpm ?? defaultLimits.tpm,
+      };
+    }
+    return defaultLimits;
   }
 
   protected getDefaultModel(): string {
-    return this.providerConfig?.defaultModel || 'claude-3-haiku-20240307'; 
+    return this.configForProvider.defaultModel || 'claude-3-haiku-20240307'; 
   }
-} 
+
+  // --- Protected methods ---
+  protected _createAnthropicClient(apiKey: string): Anthropic {
+    return new Anthropic({ apiKey });
+  }
+}

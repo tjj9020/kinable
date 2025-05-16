@@ -1,4 +1,4 @@
-import { AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
+import { AIModelError } from '@kinable/common-types';
 import OpenAI from 'openai'; // Assuming this is needed for type checks like OpenAI.APIError
 
 /**

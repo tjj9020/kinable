@@ -1,4 +1,5 @@
 import { RequestContext } from './core-interfaces';
+import { ModelConfig } from './config-schema';
 
 // Provider metadata types
 export interface ProviderMeta {
@@ -82,22 +83,6 @@ export interface AIModelRequest {
 }
 
 // Provider capability and health information
-export interface ModelCapabilities {
-  reasoning: number;      // 1-5 scale
-  creativity: number;     // 1-5 scale
-  coding: number;         // 1-5 scale
-  retrieval: boolean;
-  functionCalling: boolean;
-  contextSize: number;
-  streamingSupport: boolean;
-  vision: boolean;         // Whether this model supports vision (now required)
-  toolUse?: boolean;       // Whether this model supports tool use
-  configurable?: boolean;  // Whether this model has configurable parameters
-  maxOutputTokens?: number; // Maximum tokens for the completion
-  inputCost?: number;      // Cost per 1K input tokens
-  outputCost?: number;     // Cost per 1K output tokens
-}
-
 export interface ProviderLimits {
   rpm: number;    // Requests per minute
   tpm: number;    // Tokens per minute
@@ -129,9 +114,9 @@ export interface IAIModelProvider {
   /**
    * Get detailed capabilities for a specific model
    * @param modelName The model to check
-   * @returns Capability ratings and features
+   * @returns Capability ratings and features - Now returns ModelConfig
    */
-  getModelCapabilities(modelName: string): ModelCapabilities;
+  getModelCapabilities(modelName: string): ModelConfig;
   
   /**
    * Get current health status of this provider

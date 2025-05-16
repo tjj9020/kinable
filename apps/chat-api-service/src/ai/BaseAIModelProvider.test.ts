@@ -1,156 +1,192 @@
-import { BaseAIModelProvider } from './BaseAIModelProvider';
-import { AIModelRequest, AIModelResult, ModelCapabilities, ProviderHealthStatus, ProviderLimits, AIModelError } from '../../../../packages/common-types/src/ai-interfaces';
-import { RequestContext, IDatabaseProvider } from '../../../../packages/common-types/src/core-interfaces';
+import { 
+  BaseAIModelProvider,
+  // ModelCapabilities, // REMOVE: ModelCapabilities is not a separate type here, ModelConfig is used
+} from './BaseAIModelProvider';
+import { 
+  AIModelRequest, 
+  AIModelResult, 
+  AIModelError, 
+  ProviderHealthStatus, 
+  ProviderConfig,      // ADD
+  ModelConfig,         // ADD
+  RequestContext,      // ADD
+  ProviderLimits       // ADD
+} from '@kinable/common-types';
 
-// Mock Database Provider
-const mockDbProvider: IDatabaseProvider = {
-  getItem: jest.fn(),
-  putItem: jest.fn(),
-  updateItem: jest.fn(),
-  deleteItem: jest.fn(),
-  query: jest.fn(),
-};
+// Mock implementations for dependencies no longer passed to BaseAIModelProvider constructor
+class MockDbProvider { /* Minimal mock */ }
+class NoOpCircuitBreakerManager { /* Minimal mock */ }
 
-// Create a concrete implementation for testing
+// Sample request context - CORRECTED
+const mockContext: RequestContext = { requestId: 'req-123', region: 'us-east-2', traceId: 'trace-abc' };
+
 class TestProvider extends BaseAIModelProvider {
   public errorToThrow: Error | null = null;
   public mockResult: AIModelResult | null = null;
-  
+
   constructor(_apiKey: string) {
-    super('test-provider', 'default-test-model', mockDbProvider);
-    this.healthStatus.available = true; 
+    const mockProviderConfig: ProviderConfig = {
+      active: true,
+      secretId: 'test-secret',
+      defaultModel: 'default-test-model',
+      models: {
+        'default-test-model': {
+          name: 'Default Test Model',
+          costPerMillionInputTokens: 1,
+          costPerMillionOutputTokens: 1,
+          contextWindow: 1000,
+          maxOutputTokens: 500,
+          capabilities: ['general'],
+          active: true,
+          streamingSupport: true,
+          functionCallingSupport: false,
+          visionSupport: false,
+        } as ModelConfig,
+        'special-model': {
+          name: 'Special Model',
+          costPerMillionInputTokens: 2,
+          costPerMillionOutputTokens: 2,
+          contextWindow: 2000,
+          maxOutputTokens: 1000,
+          capabilities: ['special'],
+          active: true,
+          streamingSupport: true,
+          functionCallingSupport: true,
+          visionSupport: false,
+        } as ModelConfig,
+        'function-model': {
+          name: 'Function Model',
+          costPerMillionInputTokens: 1.5,
+          costPerMillionOutputTokens: 1.5,
+          contextWindow: 1500,
+          maxOutputTokens: 750,
+          capabilities: ['general', 'function_calling'],
+          active: true,
+          streamingSupport: true,
+          functionCallingSupport: true,
+          visionSupport: false,
+        } as ModelConfig,
+        'basic-model': {
+          name: 'Basic Model',
+          costPerMillionInputTokens: 0.5,
+          costPerMillionOutputTokens: 0.5,
+          contextWindow: 500,
+          maxOutputTokens: 250,
+          capabilities: ['general'],
+          active: true,
+          streamingSupport: false,
+          functionCallingSupport: false,
+          visionSupport: false,
+        } as ModelConfig,
+      },
+      rateLimits: { rpm: 100, tpm: 100000 }
+    };
+    super('test-provider', mockProviderConfig.defaultModel!, mockProviderConfig);
   }
-  
-  async generateResponse(request: AIModelRequest): Promise<AIModelResult> {
-    return super.generateResponse(request);
+
+  getProviderLimits(): ProviderLimits {
+    const defaultLimits: ProviderLimits = { rpm: 100, tpm: 100000 };
+    if (this.configForProvider.rateLimits) {
+      return {
+        rpm: this.configForProvider.rateLimits.rpm ?? defaultLimits.rpm,
+        tpm: this.configForProvider.rateLimits.tpm ?? defaultLimits.tpm,
+      };
+    }
+    return defaultLimits;
   }
-  
-  // Implementation for the abstract _generateResponse
-  protected _generateResponse(request: AIModelRequest): Promise<AIModelResult> {
+
+  protected async _generateResponse(request: AIModelRequest): Promise<AIModelResult> {
     if (this.errorToThrow) {
-      return Promise.reject(this.errorToThrow);
+      throw this.errorToThrow;
     }
     if (this.mockResult) {
-      return Promise.resolve(this.mockResult);
+      return this.mockResult;
+    }
+    
+    let modelForResponseActual: string;
+    if (request.preferredModel) {
+      modelForResponseActual = request.preferredModel;
+    } else {
+      modelForResponseActual = this.defaultModel!; // this.defaultModel is string, so this is string
     }
 
-    const modelToUse = request.preferredModel || this.defaultModel;
-    return Promise.resolve({
+    return {
       ok: true,
-      text: `Mocked response from _generateResponse for ${modelToUse}`,
+      text: `Mocked response from _generateResponse for ${modelForResponseActual}`,
       tokens: { prompt: 5, completion: 10, total: 15 },
       meta: {
         provider: this.providerName,
-        model: modelToUse,
+        model: modelForResponseActual, // This is now very explicitly a string
         features: [],
-        region: request.context.region,
+        region: 'test-region',
         latency: 100,
         timestamp: Date.now(),
       },
-    } as AIModelResult);
+    };
   }
-  
-  getDefaultModel(): string {
-    return 'default-test-model';
-  }
-  
-  public exposeCreateError(
+
+  exposeCreateError(
     code: AIModelError['code'],
     detail?: string,
     status?: number,
     retryable = true
   ): AIModelError {
-    return this.createError(code, detail || 'Test error detail', status, retryable);
+    return this.createError(code, detail, status, retryable);
   }
-  
-  protected standardizeError(error: Error): AIModelError {
-    console.log(`[TestProvider.standardizeError] Standardizing error: ${error.name}, message: ${error.message}`);
+
+  standardizeError(error: Error): AIModelError {
+    console.log(`[${this.providerName}.standardizeError] Standardizing error: ${error.name}, message: ${error.message}`);
     if (error.name === 'RateLimitError') {
       return this.createError('RATE_LIMIT', error.message, 429, true);
-    }
-    if (error.name === 'AuthenticationError') {
+    } else if (error.name === 'AuthenticationError') {
       return this.createError('AUTH', error.message, 401, false);
-    }
-    if (error.name === 'ContentPolicyError') {
+    } else if (error.name === 'ContentPolicyError') {
       return this.createError('CONTENT', error.message, 400, false);
-    }
-    if (error.name === 'TimeoutError') {
-      return this.createError('TIMEOUT', error.message, 504, true);
+    } else if (error.name === 'TimeoutError') {
+      return this.createError('TIMEOUT', error.message || 'Request timed out', 504, true);
     }
     return this.createError('UNKNOWN', error.message || 'Unknown test error', undefined, false);
   }
   
-  protected constructSuccessResponse(
-    text: string, 
-    tokens: { prompt: number; completion: number; total: number },
-    provider: string,
-    model: string
-  ): AIModelResult {
-    return {
-      ok: true,
-      text,
-      tokens,
-      meta: {
-        provider,
-        model,
-        features: [],
-        region: process.env.AWS_REGION || 'unknown',
-        latency: 100,
-        timestamp: Date.now()
-      }
-    };
+  getDefaultModel(): string {
+    return this.configForProvider.defaultModel || 'default-test-model-fallback';
   }
-  
-  getModelCapabilities(modelName: string): ModelCapabilities {
-    if (!modelName) {
-        console.warn("[TestProvider.getModelCapabilities] modelName is undefined, returning empty capabilities.");
-        return {} as ModelCapabilities;
+
+  getModelCapabilities(modelName: string): ModelConfig {
+    if (this.configForProvider.models && this.configForProvider.models[modelName]) {
+      return this.configForProvider.models[modelName];
     }
+    console.warn(`[TestProvider.getModelCapabilities] Model "${modelName}" not found in config. Returning default mock.`);
     return {
-      reasoning: 3,
-      creativity: 3,
-      coding: 3,
-      retrieval: modelName.includes('retrieval'),
-      functionCalling: modelName.includes('function'),
-      contextSize: 4096,
-      streamingSupport: true
-    };
-  }
-  
-  async getProviderHealth(): Promise<ProviderHealthStatus> {
-    return {
-      available: true,
-      errorRate: 0,
-      latencyP95: 200,
-      lastChecked: Date.now()
-    };
-  }
-  
-  getProviderLimits(): ProviderLimits {
-    return {
-      rpm: 10,
-      tpm: 40000
-    };
+      name: modelName || 'unknown-test-model',
+      active: false,
+      costPerMillionInputTokens: 0, costPerMillionOutputTokens: 0, contextWindow: 0, maxOutputTokens: 0,
+      capabilities: [], streamingSupport: false, functionCallingSupport: false, visionSupport: false
+    } as ModelConfig;
   }
 }
 
-// Sample request context
-const mockContext: RequestContext = {
-  requestId: 'test-request-id',
-  jwtSub: 'test-user',
-  familyId: 'test-family',
-  profileId: 'test-profile',
-  region: 'us-east-2',
-  traceId: 'test-trace-id',
-};
-
 describe('BaseAIModelProvider', () => {
   let provider: TestProvider;
+  let consoleErrorSpy: jest.SpyInstance;
+  let consoleWarnSpy: jest.SpyInstance;
+  let consoleLogSpy: jest.SpyInstance;
   
   beforeEach(() => {
     provider = new TestProvider('test-api-key');
     provider.errorToThrow = null;
     provider.mockResult = null;
+
+    // Suppress console messages for all tests unless a specific test re-spies
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
+    consoleLogSpy.mockRestore();
   });
   
   describe('Error handling', () => {

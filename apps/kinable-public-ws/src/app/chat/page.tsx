@@ -5,127 +5,180 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Logo } from '@/components/logo'
-import { getCurrentUser, signOut } from '@/lib/auth-service'
-import { sendChatMessage, ChatRequest, ChatResponse } from '@/lib/api-service'
+import { getCurrentUser, signOut, CognitoUser } from '@/lib/auth-service'
+import { sendChatMessage, ChatRequest as ApiChatRequest, ChatResponse as ApiChatResponse } from '@/lib/api-service'
+import chatHistoryDBService, { Message as DBMessage, Conversation as DBConversation } from '@/lib/ChatHistoryDBService'
 
-// Message types for the chat interface
-interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: number;
+// Aligning with DBMessage for consistency, id is messageId in DB
+interface UIMessage extends Omit<DBMessage, 'messageId'> {
+  id: string; // UI might still use 'id' as key, mapping from messageId
 }
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<UIMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<CognitoUser | null>(null)
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   const router = useRouter()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   
-  // Generate a unique ID for messages
-  const generateId = () => Math.random().toString(36).substring(2, 15)
+  // Using crypto.randomUUID for IDs as in DB service
+  const generateId = () => crypto.randomUUID()
   
-  // Scroll to bottom of messages
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
   
-  // Check if user is authenticated
   useEffect(() => {
-    const checkAuth = async () => {
+    const initializeChat = async () => {
       try {
         const cognitoUser = getCurrentUser()
-        if (!cognitoUser) {
+        if (!cognitoUser || !cognitoUser.getUsername()) { // Check for username existence
           router.push('/login')
           return
         }
-        
         setUser(cognitoUser)
-        
-        // Add welcome message
-        setMessages([
-          {
-            id: generateId(),
-            role: 'assistant',
-            content: 'Hello! How can I help you today?',
-            timestamp: Date.now()
+        const userId = cognitoUser.getUsername() // Use username as userId for now
+
+        let activeConversation: DBConversation | null = null
+        const userConversations = await chatHistoryDBService.getAllConversations(userId)
+
+        if (userConversations.length > 0) {
+          // Assuming getAllConversations sorts by lastMessageTimestamp descending, so the first is the most recent.
+          activeConversation = userConversations[0]
+        } else {
+          // Create a new conversation if none exist
+          activeConversation = await chatHistoryDBService.createConversation({
+            userId,
+            title: 'New Conversation', // Default title
+          })
+        }
+
+        if (activeConversation) {
+          setCurrentConversationId(activeConversation.conversationId)
+          const dbMessages = await chatHistoryDBService.getMessagesForConversation(activeConversation.conversationId)
+          const uiMessages: UIMessage[] = dbMessages.map(m => ({ ...m, id: m.messageId }))
+          
+          if (uiMessages.length === 0 && activeConversation.conversationId) {
+            // If it's a truly new or empty conversation, add a welcome message to DB and UI
+            const welcomeContent = 'Hello! How can I help you today?'
+            const welcomeDbMsg = await chatHistoryDBService.addMessage({
+              conversationId: activeConversation.conversationId,
+              role: 'assistant',
+              content: welcomeContent,
+            })
+            setMessages([{ ...welcomeDbMsg, id: welcomeDbMsg.messageId }])
+          } else {
+            setMessages(uiMessages)
           }
-        ])
+        } else {
+          // Fallback: if no conversation could be loaded or created, show a generic welcome or error.
+          setMessages([
+            {
+              id: generateId(),
+              role: 'assistant',
+              content: 'Welcome! Ready to chat.',
+              timestamp: Date.now(),
+              conversationId: 'fallback', // Temporary, as no real conversationId
+            }
+          ])
+        }
+
       } catch (error) {
-        console.error('Auth check failed:', error)
-        router.push('/login')
+        console.error('Auth check or chat initialization failed:', error)
+        // Keep previous behavior of redirecting if auth specifically fails
+        // For other init errors, we might want to show an error in chat UI
+        if (error instanceof Error && error.message.includes('No current user')) { // Example check
+          router.push('/login')
+        } else {
+          setMessages([
+            {
+              id: generateId(),
+              role: 'assistant',
+              content: 'Could not initialize chat. Please refresh.',
+              timestamp: Date.now(),
+              conversationId: 'error',
+            }
+          ])
+        }
       }
     }
     
-    checkAuth()
+    initializeChat()
   }, [router])
   
-  // Scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom()
   }, [messages])
   
-  // Handle sending a message
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+    const currentInput = input.trim()
+    if (!currentInput || loading || !currentConversationId || !user) return
 
-    const currentInput = input.trim(); // Capture the input value before clearing
-    
-    if (!currentInput || loading) return
-    
-    const userMessage: Message = {
-      id: generateId(),
+    const userId = user.getUsername()
+
+    const userUIMessage: UIMessage = {
+      id: generateId(), // UI key, messageId will be generated by DB service
       role: 'user',
-      content: currentInput, // Use the captured value
-      timestamp: Date.now()
+      content: currentInput,
+      timestamp: Date.now(),
+      conversationId: currentConversationId,
     }
-    
-    // Add user message to chat
-    setMessages(prev => [...prev, userMessage])
+    setMessages(prev => [...prev, userUIMessage])
     setInput('')
     setLoading(true)
-    
+
     try {
-      // Create chat request
-      const request: ChatRequest = {
-        prompt: currentInput, // Use the captured value
-        history: messages, // Send the current messages as history
-        // We can add conversationId here later if needed for context continuation
+      // Prepare history for API call *before* adding the new user message
+      // Fetch up to, say, 9 previous messages to make space for the current prompt (or adjust limit as needed)
+      // The backend AIProvider will add the current prompt to this history.
+      const historyForAPI = (await chatHistoryDBService.getMessagesForConversation(currentConversationId, 9)) // Fetch 9 to keep total context around 10 with current
+        .map(m => ({ role: m.role, content: m.content, id: m.messageId, timestamp: m.timestamp }))
+
+      // Save user message to DB *after* fetching history for the API
+      const userDbMessage = await chatHistoryDBService.addMessage({
+        conversationId: currentConversationId,
+        role: 'user',
+        content: currentInput,
+      })
+      // Optional: Update messages array with ID from DB if needed, though optimistic usually fine.
+      // setMessages(prev => prev.map(m => m.id === userUIMessage.id ? { ...userDbMessage, id: userDbMessage.messageId } : m));
+
+      const request: ApiChatRequest = {
+        prompt: currentInput,
+        history: historyForAPI as any, // Cast if types don't perfectly match api-service.Message
+        conversationId: currentConversationId, // Pass conversationId to API
       }
       
-      // Get response from AI
+      console.log('[DEBUG] Frontend - Sending to API:', JSON.stringify(request, null, 2)); // DEBUG LOG
       const response = await sendChatMessage(request)
       
-      // Add AI response to chat
-      const aiMessage: Message = {
-        id: generateId(),
+      // Save AI response to DB
+      const aiDbMessage = await chatHistoryDBService.addMessage({
+        conversationId: currentConversationId,
         role: 'assistant',
-        content: response.text,
-        timestamp: Date.now()
-      }
-      
-      setMessages(prev => [...prev, aiMessage])
+        content: response.text, 
+      })
+      const aiUIMessage: UIMessage = { ...aiDbMessage, id: aiDbMessage.messageId }
+      setMessages(prev => [...prev, aiUIMessage])
+
     } catch (error) {
       console.error('Error sending message:', error)
-      
-      // Add error message
-      setMessages(prev => [
-        ...prev,
-        {
-          id: generateId(),
-          role: 'assistant',
-          content: 'Sorry, I encountered an error. Please try again.',
-          timestamp: Date.now()
-        }
-      ])
+      const errorContent = error instanceof Error && error.message ? error.message : 'Sorry, I encountered an error. Please try again.'
+      const errorDbMsg = await chatHistoryDBService.addMessage({
+        conversationId: currentConversationId, // Log error to current conversation
+        role: 'assistant',
+        content: errorContent,
+        status: 'failed',
+      })
+      setMessages(prev => [...prev, { ...errorDbMsg, id: errorDbMsg.messageId }])
     } finally {
       setLoading(false)
     }
   }
   
-  // Handle logout
   const handleLogout = () => {
     signOut()
     router.push('/login')
@@ -139,7 +192,7 @@ export default function ChatPage() {
         <div className="flex items-center gap-4">
           {user && (
             <span className="text-sm text-muted-foreground">
-              {user.username}
+              {user.getUsername()}
             </span>
           )}
           <Button variant="outline" size="sm" onClick={handleLogout}>
@@ -152,7 +205,7 @@ export default function ChatPage() {
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map(message => (
           <div 
-            key={message.id}
+            key={message.id} // Using UIMessage.id as key
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div 
@@ -176,10 +229,10 @@ export default function ChatPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type your message..."
-            disabled={loading}
+            disabled={loading || !currentConversationId} // Disable if no active conversation
             className="flex-1"
           />
-          <Button type="submit" disabled={loading}>
+          <Button type="submit" disabled={loading || !currentConversationId}>
             {loading ? 'Sending...' : 'Send'}
           </Button>
         </div>

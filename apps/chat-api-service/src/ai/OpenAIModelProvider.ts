@@ -192,6 +192,7 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
       // Add current user prompt as the last message
       messages.push({ role: 'user', content: currentRequest.prompt });
       
+      console.log('[DEBUG] OpenAIProvider - Messages sent to OpenAI API:', JSON.stringify(messages, null, 2)); // DEBUG LOG
       return {
         model: currentModel,
         messages: messages,

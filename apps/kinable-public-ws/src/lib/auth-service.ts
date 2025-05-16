@@ -9,6 +9,10 @@ import {
 } from 'amazon-cognito-identity-js';
 import { COGNITO_CONFIG } from './api-config';
 
+// Re-export CognitoUser so it can be imported by other modules
+export { CognitoUser };
+export type { CognitoUserSession, CognitoUserAttribute }; // Exporting other types that might be useful
+
 // Check if we have valid Cognito configuration
 const isCognitoConfigured = (): boolean => {
   const isConfigured = !!(COGNITO_CONFIG.USER_POOL_ID && COGNITO_CONFIG.CLIENT_ID);

@@ -34,6 +34,7 @@ export const handler = async (
     if (!event.body) {
       return createErrorResponse(400, 'Request body is required');
     }
+    console.log('[DEBUG] Backend - Received event.body:', event.body); // DEBUG LOG
     
     let requestBody;
     try {
@@ -108,6 +109,7 @@ export const handler = async (
       }
     };
     
+    console.log('[DEBUG] Backend - Constructed AIModelRequest:', JSON.stringify(modelRequest, null, 2)); // DEBUG LOG
     // Route the request
     const result = await router.routeRequest(modelRequest);
     

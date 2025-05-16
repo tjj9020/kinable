@@ -17,13 +17,13 @@ describe('IUserIdentity Contract', () => {
     expect(exampleUserIdentity).toEqual(
       expect.objectContaining({
         userId: expect.any(String),
-        familyId: expect.toBeOneOf([expect.any(String), null]),
-        profileId: expect.toBeOneOf([expect.any(String), null]),
+        familyId: exampleUserIdentity.familyId === null ? null : expect.any(String),
+        profileId: exampleUserIdentity.profileId === null ? null : expect.any(String),
         role: expect.any(String),
         isAuthenticated: expect.any(Boolean),
-        displayName: expect.toBeOneOf([expect.any(String), undefined]),
-        email: expect.toBeOneOf([expect.any(String), undefined]),
-        region: expect.toBeOneOf([expect.any(String), null, undefined]),
+        displayName: exampleUserIdentity.displayName === undefined ? undefined : expect.any(String),
+        email: exampleUserIdentity.email === undefined ? undefined : expect.any(String),
+        region: exampleUserIdentity.region === null ? null : (exampleUserIdentity.region === undefined ? undefined : expect.any(String)),
       })
     );
 

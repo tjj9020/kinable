@@ -38,6 +38,7 @@ const anthropicSpecificProviderConfig: ProviderConfig = {
   secretId: 'test-anthropic-secret',
   models: {
     [DEFAULT_ANTHROPIC_MODEL]: {
+      id: DEFAULT_ANTHROPIC_MODEL,
       name: 'Claude 3 Haiku',
       contextWindow: 200000,
       maxOutputTokens: DEFAULT_MAX_TOKENS,
@@ -86,6 +87,47 @@ const mockDbProvider: jest.Mocked<IDatabaseProvider> = {
   deleteItem: jest.fn(),
   query: jest.fn(),
 } as unknown as jest.Mocked<IDatabaseProvider>; // Cast to bypass strict checks temporarily
+
+// Default model configurations for tests
+const claude21ModelConfig: ModelConfig = {
+  id: 'claude-2.1',
+  name: 'Claude 2.1',
+  contextWindow: 200000,
+  maxOutputTokens: 4096,
+  active: true,
+  visionSupport: false,
+  functionCallingSupport: false,
+  capabilities: ["general"],
+  streamingSupport: true,
+  costPerMillionInputTokens: 8,
+  costPerMillionOutputTokens: 24,
+};
+const claudeInstantModelConfig: ModelConfig = {
+  id: 'claude-instant-1.2',
+  name: 'Claude Instant 1.2',
+  contextWindow: 100000,
+  maxOutputTokens: 4096,
+  active: true,
+  visionSupport: false,
+  functionCallingSupport: false,
+  capabilities: ["general"],
+  streamingSupport: true,
+  costPerMillionInputTokens: 0.8,
+  costPerMillionOutputTokens: 2.4,
+};
+const claudeHaikuModelConfig: ModelConfig = {
+  id: 'claude-3-haiku-20240307',
+  name: 'Claude Haiku',
+  contextWindow: 200000,
+  maxOutputTokens: 4096,
+  active: true,
+  visionSupport: true,
+  functionCallingSupport: false,
+  capabilities: ["general", "vision"],
+  streamingSupport: true,
+  costPerMillionInputTokens: 0.25,
+  costPerMillionOutputTokens: 1.25,
+};
 
 describe('AnthropicModelProvider', () => {
   let AnthropicModelProviderClass: typeof import('./AnthropicModelProvider').AnthropicModelProvider;
@@ -220,10 +262,10 @@ describe('AnthropicModelProvider', () => {
         // });
       });
 
-      test('should handle empty conversationHistory (single prompt)', async () => {
+      test('should handle empty conversationHistory correctly (single prompt)', async () => {
         const mockRequest: AIModelRequest = {
           prompt: 'Current user prompt.',
-          context: { ...mockContext, conversationHistory: [] },
+          context: { ...mockContext, history: [] },
           preferredModel: defaultModel
         };
         currentMockMessagesCreate.mockResolvedValue({
@@ -247,7 +289,7 @@ describe('AnthropicModelProvider', () => {
           prompt: 'Latest user question.',
           context: {
             ...mockContext,
-            conversationHistory: [
+            history: [
               { role: 'user', content: 'Previous user question.' },
               { role: 'assistant', content: 'Previous assistant answer.' },
             ],
@@ -274,15 +316,15 @@ describe('AnthropicModelProvider', () => {
         );
       });
 
-      test('should use system message from conversationHistory for Anthropic system parameter', async () => {
+      test('should use request.systemPrompt for Anthropic system parameter', async () => {
         const mockRequest: AIModelRequest = {
           prompt: 'User query.',
+          systemPrompt: 'System instruction for Claude.',
           context: {
             ...mockContext,
-            conversationHistory: [
-              { role: 'system', content: 'System instruction for Claude.'},
-              { role: 'user', content: 'Older user message.'},
-              { role: 'assistant', content: 'Older assistant reply.'},
+            history: [
+              { role: 'user', content: 'Older user message.' },
+              { role: 'assistant', content: 'Older assistant reply.' },
             ],
           },
           preferredModel: defaultModel
@@ -307,17 +349,16 @@ describe('AnthropicModelProvider', () => {
         );
       });
 
-      test('should handle mixed history, using the first system message and filtering others', async () => {
-         const mockRequest: AIModelRequest = {
+      test('should use request.systemPrompt and ignore system messages in history', async () => {
+        const mockRequest: AIModelRequest = {
           prompt: 'Final user prompt.',
+          systemPrompt: 'Primary system instruction.',
           context: {
             ...mockContext,
-            conversationHistory: [
-              { role: 'system', content: 'Primary system instruction.'},
-              { role: 'user', content: 'First user message.'},
-              { role: 'assistant', content: 'First assistant response.'},
-              { role: 'system', content: 'Ignored secondary system message.'},
-              { role: 'user', content: 'Second user message.'},
+            history: [
+              { role: 'user', content: 'First user message.' },
+              { role: 'assistant', content: 'First assistant response.' },
+              { role: 'user', content: 'Second user message.' },
             ],
           },
           preferredModel: defaultModel

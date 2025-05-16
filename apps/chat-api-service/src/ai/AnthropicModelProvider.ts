@@ -136,11 +136,12 @@ export class AnthropicModelProvider extends BaseAIModelProvider {
         temperature: temperature,
       };
 
-      const systemPromptMessage = context.history?.find(m => m.role === 'system');
-      if (systemPromptMessage) {
-        anthropicRequestParams.system = systemPromptMessage.content;
+      // Use systemPrompt from the request if provided
+      if (request.systemPrompt) {
+        anthropicRequestParams.system = request.systemPrompt;
       } else {
-        anthropicRequestParams.system = undefined;
+        // Ensure it's explicitly undefined if not provided, rather than relying on previous history search
+        anthropicRequestParams.system = undefined; 
       }
       
       if (request.streaming) {

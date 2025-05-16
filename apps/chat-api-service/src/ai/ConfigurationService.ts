@@ -146,6 +146,7 @@ export class ConfigurationService {
   private getDefaultConfiguration(): AiServiceConfiguration {
     // This default needs to be more complete and match AiServiceConfiguration and ModelConfig
     const defaultOpenAiModel: ModelConfig = {
+        id: "gpt-3.5-turbo-default",
         name: "GPT-3.5 Turbo (Default)",
         description: "Default fallback model.",
         costPerMillionInputTokens: 0.50,

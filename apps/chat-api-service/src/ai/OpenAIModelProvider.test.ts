@@ -50,6 +50,7 @@ const mockDbProvider: IDatabaseProvider = {
 
 // Define mockProviderConfig to be used in tests
 const mockGPT4oModelConfig: ModelConfig = {
+  id: 'gpt-4o',
   name: 'GPT-4o',
   costPerMillionInputTokens: 5,
   costPerMillionOutputTokens: 15,
@@ -61,6 +62,7 @@ const mockGPT4oModelConfig: ModelConfig = {
   active: true
 };
 const mockGPT35ModelConfig: ModelConfig = {
+  id: 'gpt-3.5-turbo',
   name: 'GPT-3.5 Turbo',
   costPerMillionInputTokens: 0.5,
   costPerMillionOutputTokens: 1.5,
@@ -72,6 +74,7 @@ const mockGPT35ModelConfig: ModelConfig = {
   active: true
 };
 const mockGPT35InactiveModelConfig: ModelConfig = {
+  id: 'gpt-3.5-turbo-inactive',
   name: 'GPT-3.5 Turbo Inactive',
   costPerMillionInputTokens: 0.5,
   costPerMillionOutputTokens: 1.5,
@@ -232,7 +235,7 @@ describe('OpenAIModelProvider', () => {
       test('should handle empty conversationHistory correctly (single prompt)', async () => {
         const mockRequest: AIModelRequest = {
           prompt: 'Current user prompt.',
-          context: { ...mockContext, conversationHistory: [] },
+          context: { ...mockContext, history: [] },
           preferredModel: 'gpt-3.5-turbo'
         };
         const mockApiResponse = {
@@ -256,7 +259,7 @@ describe('OpenAIModelProvider', () => {
           prompt: 'Latest user question.',
           context: {
             ...mockContext,
-            conversationHistory: [
+            history: [
               { role: 'user', content: 'Previous user question.' },
               { role: 'assistant', content: 'Previous assistant answer.' },
             ],
@@ -283,14 +286,15 @@ describe('OpenAIModelProvider', () => {
         );
       });
 
-      test('should place system message from conversationHistory first', async () => {
+      test('should place system message from request.systemPrompt first', async () => {
         const mockRequest: AIModelRequest = {
           prompt: 'User query.',
+          systemPrompt: 'System instruction.', // System prompt now directly in request
           context: {
             ...mockContext,
-            conversationHistory: [
+            history: [
               { role: 'user', content: 'Older user message.' },
-              { role: 'system', content: 'System instruction.' },
+              // { role: 'system', content: 'System instruction.' }, // Removed from history
               { role: 'assistant', content: 'Older assistant reply.' },
             ],
           },
@@ -308,7 +312,7 @@ describe('OpenAIModelProvider', () => {
         expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
           expect.objectContaining({
             messages: [
-              { role: 'system', content: 'System instruction.' },
+              { role: 'system', content: 'System instruction.' }, // Expected from request.systemPrompt
               { role: 'user', content: 'Older user message.' },
               { role: 'assistant', content: 'Older assistant reply.' },
               { role: 'user', content: 'User query.' },
@@ -317,16 +321,17 @@ describe('OpenAIModelProvider', () => {
         );
       });
 
-      test('should handle mixed conversation history and only one system message', async () => {
+      test('should handle mixed conversation history and use request.systemPrompt, ignoring history system messages', async () => {
         const mockRequest: AIModelRequest = {
           prompt: 'Final user prompt.',
+          systemPrompt: 'Initial system prompt.', // System prompt now directly in request
           context: {
             ...mockContext,
-            conversationHistory: [
-              { role: 'system', content: 'Initial system prompt.' },
+            history: [
+              // { role: 'system', content: 'Initial system prompt.' }, // Removed from history
               { role: 'user', content: 'First user message.' },
               { role: 'assistant', content: 'First assistant response.' },
-              { role: 'system', content: 'This system message should be ignored if one already processed.' },
+              // { role: 'system', content: 'This system message should be ignored if one already processed.' }, // Removed from history
               { role: 'user', content: 'Second user message.' },
             ],
           },
@@ -344,10 +349,10 @@ describe('OpenAIModelProvider', () => {
         expect(mockOpenAIClient.chat.completions.create).toHaveBeenCalledWith(
           expect.objectContaining({
             messages: [
-              { role: 'system', content: 'Initial system prompt.' },
+              { role: 'system', content: 'Initial system prompt.' }, // Expected from request.systemPrompt
               { role: 'user', content: 'First user message.' },
               { role: 'assistant', content: 'First assistant response.' },
-              // The second system message is filtered out by the implementation
+              // The second system message is filtered out by the implementation (and now not present in history for test)
               { role: 'user', content: 'Second user message.' },
               { role: 'user', content: 'Final user prompt.' },
             ],

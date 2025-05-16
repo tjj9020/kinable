@@ -5,7 +5,8 @@
 
 // Model-specific configuration
 export interface ModelConfig {
-  name: string; // Display name, e.g., "GPT-4 Omni"
+  id: string; // e.g., "gpt-4o", "claude-3-haiku-20240307"
+  name: string; // User-friendly name, e.g., "GPT-4 Omni"
   description?: string; // Model description
   
   costPerMillionInputTokens: number;  // Cost per 1 Million input tokens
@@ -24,6 +25,10 @@ export interface ModelConfig {
   // Optional fields for advanced routing/rollout
   priority?: number;        // Priority for routing (lower is better, e.g., for A/B testing specific models)
   rolloutPercentage?: number; // Percentage of users who should get this model (0-100 for canary)
+
+  defaultTemperature?: number;
+  systemPrompt?: string; // Added optional system prompt for the model
+  notes?: string; // Any other notes or metadata
 }
 
 // Regional endpoint configuration

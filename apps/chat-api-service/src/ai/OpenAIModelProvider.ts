@@ -176,13 +176,13 @@ export class OpenAIModelProvider extends BaseAIModelProvider {
     const createChatCompletionParams = (currentRequest: AIModelRequest, currentModel: string): OpenAI.Chat.Completions.ChatCompletionCreateParams => {
       const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
 
-      // Add system message first, if present in history
-      const systemMessage = currentRequest.context.history?.find(m => m.role === 'system');
-      if (systemMessage) {
-        messages.push({ role: 'system', content: systemMessage.content });
+      // Use systemPrompt from the request if provided
+      if (currentRequest.systemPrompt) {
+        messages.push({ role: 'system', content: currentRequest.systemPrompt });
       }
 
       // Add other user/assistant messages from history, filtering out any additional system messages
+      // that might be in history (though router now sets the main systemPrompt)
       currentRequest.context.history?.forEach(histMsg => {
         if (histMsg.role === 'user' || histMsg.role === 'assistant') {
           messages.push({ role: histMsg.role, content: histMsg.content });

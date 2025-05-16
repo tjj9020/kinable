@@ -65,24 +65,32 @@ jest.mock('./CircuitBreakerManager', () => ({
   })),
 }));
 
+// Define constants used by mockContext and within the describe block at a higher scope
+const MOCK_AWS_CLIENT_REGION = 'us-west-2';
+const DEFAULT_OPENAI_MODEL = 'gpt-3.5-turbo';
+const DEFAULT_ANTHROPIC_MODEL = 'claude-3-haiku-20240307';
 
-const createMockProvider = (name: string, canFulfill = true, shouldSucceed = true, isRetryableError = false, errorCode: AIModelError['code'] = 'UNKNOWN'): IAIModelProvider => {
+const createMockProvider = (name: string, canFulfillRetVal = true, shouldSucceed = true, isRetryableError = false, errorCode: AIModelError['code'] = 'UNKNOWN'): IAIModelProvider => {
   return {
-    generateResponse: jest.fn().mockImplementation(async (_request: AIModelRequest): Promise<AIModelResult> => {
+    generateResponse: jest.fn().mockImplementation(async (request: AIModelRequest): Promise<AIModelResult> => {
+      console.log(`[TEST DEBUG] ${name}.generateResponse CALLED with prompt: ${request.prompt}, systemPrompt: ${request.systemPrompt}, preferredModel: ${request.preferredModel}`);
       if (shouldSucceed) {
-        return { ok: true, text: `Response from ${name}`, tokens: { prompt: 10, completion: 5, total: 15 }, meta: { provider: name, model: 'test-model', features: [], region: 'us-east-2', latency: 100, timestamp: Date.now() } };
+        return { ok: true, text: `Response from ${name}`, tokens: { prompt: 10, completion: 5, total: 15 }, meta: { provider: name, model: request.preferredModel || 'test-model', features: [], region: 'us-east-2', latency: 100, timestamp: Date.now() } };
       } else {
         return { ok: false, code: errorCode, provider: name, detail: 'Test error', retryable: isRetryableError, status: 500 };
       }
     }),
-    canFulfill: jest.fn().mockResolvedValue(canFulfill), // Ensure async if original is
+    canFulfill: jest.fn().mockImplementation(async (request: AIModelRequest) => {
+      console.log(`[TEST DEBUG] ${name}.canFulfill CALLED for model: ${request.preferredModel}, requiredCaps: ${request.requiredCapabilities}, tools: ${request.tools}`);
+      return canFulfillRetVal;
+    }),
     getModelCapabilities: jest.fn().mockReturnValue({ reasoning: 3, creativity: 3, coding: 3, retrieval: false, functionCalling: false, contextSize: 4096, streamingSupport: true, inputCost: 0.0001, outputCost: 0.0002, maxOutputTokens: 4096 }),
     getProviderHealth: jest.fn().mockReturnValue({ available: true, errorRate: 0, latencyP95: 200, lastChecked: Date.now() }),
     getProviderLimits: jest.fn().mockReturnValue({ rpm: 20, tpm: 80000 })
   };
 };
 
-const mockContext: RequestContext = { requestId: 'test-request-id', jwtSub: 'test-user', familyId: 'test-family', profileId: 'test-profile', region: 'us-east-1', traceId: 'test-trace-id' }; // region is lambda region
+const mockContext: RequestContext = { requestId: 'test-request-id', jwtSub: 'test-user', familyId: 'test-family', profileId: 'test-profile', region: MOCK_AWS_CLIENT_REGION, traceId: 'test-trace-id' }; // region is lambda region, aligned with router's serviceRegion
 
 describe('AIModelRouter', () => {
   let router: AIModelRouter;
@@ -90,44 +98,42 @@ describe('AIModelRouter', () => {
   let mockGenericOpenAIProvider: IAIModelProvider;
   let mockGenericAnthropicProvider: IAIModelProvider;
   let mockDatabaseProvider: jest.Mocked<IDatabaseProvider>;
+  let mockCircuitBreakerManagerInstance: jest.Mocked<CircuitBreakerManager>;
 
   const MOCK_ANTHROPIC_SECRET_ID = 'mock-anthropic-secret-id';
-  const MOCK_AWS_CLIENT_REGION = 'us-west-2';
-  const DEFAULT_OPENAI_MODEL = 'gpt-3.5-turbo';
-  const DEFAULT_ANTHROPIC_MODEL = 'claude-3-haiku-20240307';
 
   // Corrected mock model configurations
   const mockOpenAIModelConfig: ModelConfig = {
+    id: DEFAULT_OPENAI_MODEL,
     name: 'GPT-3.5 Turbo (Mock)',
     description: 'Mocked OpenAI model',
-    costPerMillionInputTokens: 1.00, // Was inputCost: 0.001 (per 1k)
-    costPerMillionOutputTokens: 2.00, // Was outputCost: 0.002 (per 1k)
-    contextWindow: 4096, // Was contextSize
+    costPerMillionInputTokens: 1.00,
+    costPerMillionOutputTokens: 2.00,
+    contextWindow: 4096,
     maxOutputTokens: 4096,
     capabilities: ['general', 'chat'],
     streamingSupport: true,
-    functionCallingSupport: true, // Was functionCalling
-    visionSupport: false, // Was vision
+    functionCallingSupport: true,
+    visionSupport: false,
     active: true,
     priority: 1,
     rolloutPercentage: 100
-    // Removed: reasoning, creativity, coding, retrieval, toolUse, configurable (not in ModelConfig)
   };
   const mockAnthropicModelConfig: ModelConfig = {
+    id: DEFAULT_ANTHROPIC_MODEL,
     name: 'Claude Haiku (Mock)',
     description: 'Mocked Anthropic model',
-    costPerMillionInputTokens: 0.25, // Was inputCost: 0.00025 (per 1k)
-    costPerMillionOutputTokens: 1.25, // Was outputCost: 0.00125 (per 1k)
-    contextWindow: 100000, // Was contextSize
+    costPerMillionInputTokens: 0.25,
+    costPerMillionOutputTokens: 1.25,
+    contextWindow: 100000,
     maxOutputTokens: 4096,
-    capabilities: ['general', 'chat', 'vision'], // vision was true
+    capabilities: ['general', 'chat', 'vision'],
     streamingSupport: true,
-    functionCallingSupport: true, // Was functionCalling
-    visionSupport: true, // Was vision
+    functionCallingSupport: true,
+    visionSupport: true,
     active: true,
     priority: 1,
     rolloutPercentage: 100
-    // Removed: reasoning, creativity, coding, retrieval, toolUse, configurable (not in ModelConfig)
   };
 
 
@@ -212,15 +218,26 @@ describe('AIModelRouter', () => {
       featureFlags: {}
     } as AiServiceConfiguration);
     
-    router = new AIModelRouter(
-      mockConfigServiceInstance,
-      MOCK_AWS_CLIENT_REGION
-    );
+    mockCircuitBreakerManagerInstance = {
+      isRequestAllowed: mockIsRequestAllowed,
+      recordSuccess: mockRecordSuccess,
+      recordFailure: mockRecordFailure,
+    } as unknown as jest.Mocked<CircuitBreakerManager>;
+
+    router = new AIModelRouter(mockConfigServiceInstance, MOCK_AWS_CLIENT_REGION, 'kinable-dev');
     
     // Pre-populate the router's providers map to avoid dynamic initialization
     router.addProvider('openai', mockGenericOpenAIProvider);
     router.addProvider('anthropic', mockGenericAnthropicProvider);
   });
+
+  // Define getBaseConfig here so it's available to all nested describe blocks
+  // It relies on mockConfigServiceInstance which is set in the beforeEach above.
+  const getBaseConfig = async (): Promise<AiServiceConfiguration> => {
+    const defaultConfig = await mockConfigServiceInstance.getConfiguration();
+    // Deep clone to prevent tests from interfering with each other's config modifications
+    return JSON.parse(JSON.stringify(defaultConfig)); 
+  };
 
   test('should initialize correctly', () => {
     expect(router).toBeDefined();
@@ -671,6 +688,7 @@ describe('AIModelRouter', () => {
     delete specificConfig.providers.anthropic.models[DEFAULT_ANTHROPIC_MODEL].outputCost;
     
     const dummyModelConfig: ModelConfig = { 
+      id: 'dummy-model',
       name: "Dummy Model",
       description: "A cheap dummy model for testing.",
       costPerMillionInputTokens: 0.1,
@@ -747,11 +765,6 @@ describe('AIModelRouter', () => {
   });
 
   describe('Configuration and Error Handling', () => {
-    const getBaseConfig = async (): Promise<AiServiceConfiguration> => {
-      const defaultConfig = await mockConfigServiceInstance.getConfiguration();
-      return JSON.parse(JSON.stringify(defaultConfig));
-    };
-
     beforeEach(() => {
       if (router) {
         router.clearProviders();
@@ -811,4 +824,166 @@ describe('AIModelRouter', () => {
 
     test.todo('should throw error for unknown provider type in config - investigate test reliability');
   });
+
+  // Test scenarios for system prompt logic
+  describe('System Prompt Handling', () => {
+    const requestBase: AIModelRequest = {
+      prompt: 'Test prompt',
+      context: mockContext,
+      estimatedInputTokens: 10,
+      estimatedOutputTokens: 20,
+    };
+
+    it('should use systemPrompt from request if provided, even if model config has one', async () => {
+      const requestSystemPrompt = "System prompt from request";
+      const modelConfigSystemPrompt = "System prompt from model config";
+
+      // Simplified and explicit configuration for this test
+      const testConfig: AiServiceConfiguration = {
+        configVersion: '1.0.0-test',
+        schemaVersion: '1.0.0-test',
+        updatedAt: new Date().toISOString(),
+        providers: {
+          openai: {
+            active: true,
+            keyVersion: 1,
+            secretId: `kinable-dev/${MOCK_AWS_CLIENT_REGION}/openai/api-key`,
+            defaultModel: DEFAULT_OPENAI_MODEL,
+            endpoints: { default: { url: 'https://api.openai.com/v1', region: MOCK_AWS_CLIENT_REGION, priority: 1, active: true } },
+            models: {
+              [DEFAULT_OPENAI_MODEL]: {
+                ...mockOpenAIModelConfig, // Spread the base mock config (includes id, active:true, capabilities etc)
+                systemPrompt: modelConfigSystemPrompt, // Model has its own system prompt
+              },
+            },
+            rateLimits: { rpm: 100, tpm: 100000 },
+            retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
+            apiVersion: 'v1',
+            rolloutPercentage: 100
+          },
+          anthropic: { // Keep anthropic defined as it's in providerPreferenceOrder
+            active: true,
+            keyVersion: 1,
+            secretId: `kinable-dev/${MOCK_AWS_CLIENT_REGION}/anthropic/api-key`,
+            defaultModel: DEFAULT_ANTHROPIC_MODEL,
+            endpoints: { default: { url: 'https://api.anthropic.com/v1', region: MOCK_AWS_CLIENT_REGION, priority: 1, active: true } },
+            models: { [DEFAULT_ANTHROPIC_MODEL]: mockAnthropicModelConfig },
+            rateLimits: { rpm: 100, tpm: 100000 },
+            retryConfig: { maxRetries: 3, initialDelayMs: 200, maxDelayMs: 1000 },
+            apiVersion: 'v1',
+            rolloutPercentage: 100
+          }
+        },
+        routing: {
+          rules: [],
+          weights: { cost: 0.7, quality: 0.1, latency: 0.1, availability: 0.1 },
+          providerPreferenceOrder: ['openai', 'anthropic'],
+          defaultModel: DEFAULT_OPENAI_MODEL
+        },
+        featureFlags: {}
+      };
+
+      mockGetConfiguration.mockResolvedValue(testConfig);
+
+      // Re-initialize router to pick up the new pristine config for this test only
+      // This is important if other tests modify the shared router instance's internal state
+      // or its understanding of providers based on previous configs.
+      router = new AIModelRouter(mockConfigServiceInstance, MOCK_AWS_CLIENT_REGION, 'kinable-dev');
+      // Ensure the generic mock providers (which have our mockOpenAIGenerateResponse) are added.
+      // The router's _getOrInitializeProvider will use these if found by name ('openai', 'anthropic').
+      router.addProvider('openai', mockGenericOpenAIProvider);
+      router.addProvider('anthropic', mockGenericAnthropicProvider);
+
+      const requestWithPrompt: AIModelRequest = { ...requestBase, systemPrompt: requestSystemPrompt }; // Request has its own system prompt
+      await router.routeRequest(requestWithPrompt);
+
+      expect(mockGenericOpenAIProvider.generateResponse).toHaveBeenCalledTimes(1);
+      const calledWithRequest = (mockGenericOpenAIProvider.generateResponse as jest.Mock).mock.calls[0][0] as AIModelRequest;
+      expect(calledWithRequest.systemPrompt).toBe(requestSystemPrompt);
+      expect(calledWithRequest.preferredModel).toBe(DEFAULT_OPENAI_MODEL); // Ensure it picked the right model
+    });
+
+    it('should use systemPrompt from model config if request does not provide one', async () => {
+      const modelSystemPrompt = "System prompt from model config";
+      
+      mockGetConfiguration.mockResolvedValue({
+        ...await getBaseConfig(),
+        providers: {
+          ... (await getBaseConfig()).providers,
+          openai: {
+            ...(await getBaseConfig()).providers.openai,
+            models: {
+              [DEFAULT_OPENAI_MODEL]: {
+                ...mockOpenAIModelConfig,
+                systemPrompt: modelSystemPrompt,
+              },
+            },
+          },
+        },
+      });
+
+      await router.routeRequest(requestBase); // requestBase has no systemPrompt
+
+      expect(mockGenericOpenAIProvider.generateResponse).toHaveBeenCalledTimes(1);
+      const calledWithRequest = (mockGenericOpenAIProvider.generateResponse as jest.Mock).mock.calls[0][0] as AIModelRequest;
+      expect(calledWithRequest.systemPrompt).toBe(modelSystemPrompt);
+    });
+
+    it('should have undefined systemPrompt if neither request nor model config provides one', async () => {
+      // Ensure mockOpenAIModelConfig does NOT have systemPrompt for this test
+      // Create a new object explicitly without systemPrompt or with it as undefined
+      const configWithoutSystemPrompt: ModelConfig = {
+        ...mockOpenAIModelConfig, // Spread the base mock config
+        systemPrompt: undefined // Explicitly set to undefined or omit if truly not needed
+      };
+
+      mockGetConfiguration.mockResolvedValue({
+        ...await getBaseConfig(),
+        providers: {
+          ... (await getBaseConfig()).providers,
+          openai: {
+            ...(await getBaseConfig()).providers.openai,
+            models: {
+              [DEFAULT_OPENAI_MODEL]: configWithoutSystemPrompt,
+            },
+          },
+        },
+      });
+      
+      await router.routeRequest(requestBase); // requestBase has no systemPrompt
+
+      expect(mockGenericOpenAIProvider.generateResponse).toHaveBeenCalledTimes(1);
+      const calledWithRequest = (mockGenericOpenAIProvider.generateResponse as jest.Mock).mock.calls[0][0] as AIModelRequest;
+      expect(calledWithRequest.systemPrompt).toBeUndefined();
+    });
+
+    it('should use systemPrompt from request if model config does not have one', async () => {
+      const requestSystemPrompt = "System prompt from request only";
+       // Ensure mockOpenAIModelConfig does NOT have systemPrompt for this test
+      const configWithoutSystemPrompt = { ...mockOpenAIModelConfig };
+      delete configWithoutSystemPrompt.systemPrompt;
+
+      mockGetConfiguration.mockResolvedValue({
+        ...await getBaseConfig(),
+        providers: {
+          ... (await getBaseConfig()).providers,
+          openai: {
+            ...(await getBaseConfig()).providers.openai,
+            models: {
+              [DEFAULT_OPENAI_MODEL]: configWithoutSystemPrompt,
+            },
+          },
+        },
+      });
+
+      const requestWithPrompt: AIModelRequest = { ...requestBase, systemPrompt: requestSystemPrompt };
+      await router.routeRequest(requestWithPrompt);
+
+      expect(mockGenericOpenAIProvider.generateResponse).toHaveBeenCalledTimes(1);
+      const calledWithRequest = (mockGenericOpenAIProvider.generateResponse as jest.Mock).mock.calls[0][0] as AIModelRequest;
+      expect(calledWithRequest.systemPrompt).toBe(requestSystemPrompt);
+    });
+  });
+
+  // Add other test cases here if needed
 });

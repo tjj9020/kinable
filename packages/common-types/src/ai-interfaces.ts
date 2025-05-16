@@ -63,6 +63,7 @@ export type AIModelResult = AIModelSuccess | AIModelError;
 // Request type for model generation
 export interface AIModelRequest {
   prompt: string; // Current user prompt
+  systemPrompt?: string; // Added optional system prompt
   conversationId?: string; 
   preferredProvider?: string;
   preferredModel?: string;

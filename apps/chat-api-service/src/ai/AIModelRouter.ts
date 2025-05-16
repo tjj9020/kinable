@@ -137,11 +137,12 @@ export class AIModelRouter {
    */
   @tracer.captureMethod()
   public async routeRequest(request: AIModelRequest & { estimatedInputTokens?: number; estimatedOutputTokens?: number }): Promise<AIModelResult> {
-    const providerCallRegion = this.routerAwsRegion;
+    const startTime = Date.now(); // Ensure startTime is here and only here at the top
+    let config: AiServiceConfiguration | null = null;
     let triedProvidersInfo: Array<{ name: string; reason?: string }> = [];
 
     try {
-      const config = await this.configService.getConfiguration();
+      config = await this.configService.getConfiguration();
       const { 
         estimatedInputTokens,
         estimatedOutputTokens,
@@ -176,7 +177,7 @@ export class AIModelRouter {
           continue;
         }
 
-        const healthKey = `${providerName}#${providerCallRegion}`;
+        const healthKey = `${providerName}#${this.routerAwsRegion}`;
         if (!(await this.circuitBreakerManager.isRequestAllowed(healthKey))) {
           triedProvidersInfo.push({ name: providerName, reason: 'circuit_open' });
           console.warn(`[AIModelRouter] Circuit breaker OPEN for ${providerName} (${healthKey}). Skipping.`);
@@ -290,9 +291,26 @@ export class AIModelRouter {
         const currentProviderHealthKey = candidate.healthKey;
 
         // Request might need model explicitly set if not just using provider default
-        const finalRequest = { ...request, preferredModel: candidate.modelName };
+        const finalRequest: AIModelRequest = {
+          ...request, // Spread the original request
+          preferredProvider: candidate.name, // Ensure these are set to the chosen ones
+          preferredModel: candidate.modelName,
+          // systemPrompt is part of 'request' if already set by the caller, otherwise undefined here
+        };
+        
+        // Fetch systemPrompt from the selected model's configuration and add to finalRequest
+        const selectedModelConfig = config.providers[candidate.name]?.models[candidate.modelName];
+        
+        // If the incoming request does not already have a systemPrompt, 
+        // AND the selected model's configuration does, then use the model's default.
+        if (!finalRequest.systemPrompt && selectedModelConfig?.systemPrompt) {
+          finalRequest.systemPrompt = selectedModelConfig.systemPrompt;
+          console.log(`[AIModelRouter] Using system prompt from ModelConfig for ${candidate.modelName}: "${selectedModelConfig.systemPrompt.substring(0, 50)}..."`);
+        } else if (finalRequest.systemPrompt) {
+          // Log that we're using the system prompt that was passed in with the request
+          console.log(`[AIModelRouter] Using system prompt from incoming request for ${candidate.modelName}: "${finalRequest.systemPrompt.substring(0, 50)}..."`);
+        }
 
-        const startTime = Date.now();
         let result: AIModelResult;
         let durationMs: number;
 
@@ -316,7 +334,7 @@ export class AIModelRouter {
           }
         } catch (error: any) {
           durationMs = Date.now() - startTime;
-          console.error(`[AIModelRouter] Unhandled error during provider.generateResponse for ${candidate.name}#${providerCallRegion} (Model: ${candidate.modelName}):`, error);
+          console.error(`[AIModelRouter] Unhandled error during provider.generateResponse for ${candidate.name}#${this.routerAwsRegion} (Model: ${candidate.modelName}):`, error);
           await this.circuitBreakerManager.recordFailure(currentProviderHealthKey, durationMs);
           // Continue to next candidate if available
         }

@@ -3,11 +3,10 @@ import {
   AIModelResult,
   ProviderHealthStatus,
   ProviderLimits,
-  AIModelError
-} from '@kinable/common-types';
-import {
+  AIModelError,
+  ProviderConfig,
   ModelConfig,
-  ProviderConfig 
+  ChatMessage
 } from '@kinable/common-types';
 // import { IDatabaseProvider } from '@kinable/common-types'; // Updated import, commented out as original
 
@@ -93,8 +92,8 @@ export abstract class BaseAIModelProvider {
   private _estimateTokens(request: AIModelRequest): number {
     // Basic estimation, can be refined.
     let historyTokens = 0;
-    if (request.context.conversationHistory) {
-      historyTokens = request.context.conversationHistory.reduce((sum, msg) => sum + Math.ceil(msg.content.length / 4), 0);
+    if (request.context.history) {
+      historyTokens = request.context.history.reduce((sum: number, msg: ChatMessage) => sum + Math.ceil(msg.content.length / 4), 0);
     }
     const promptTokens = Math.ceil(request.prompt.length / 4);
     const defaultMaxCompletionTokens = 1024; 

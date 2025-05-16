@@ -1,193 +1,142 @@
 'use client'
 
-import { useState, useEffect, useRef, FormEvent } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Logo } from '@/components/logo'
 import { getCurrentUser, signOut, CognitoUser } from '@/lib/auth-service'
-import { sendChatMessage, ChatRequest as ApiChatRequest, ChatResponse as ApiChatResponse } from '@/lib/api-service'
-import chatHistoryDBService, { Message as DBMessage, Conversation as DBConversation } from '@/lib/ChatHistoryDBService'
-
-// Aligning with DBMessage for consistency, id is messageId in DB
-interface UIMessage extends Omit<DBMessage, 'messageId'> {
-  id: string; // UI might still use 'id' as key, mapping from messageId
-}
+import chatHistoryDBService, { Conversation as DBConversation } from '@/lib/ChatHistoryDBService'
+import ChatSidebar from './components/ChatSidebar'
+import ChatView from './components/ChatView'
 
 export default function ChatPage() {
-  const [messages, setMessages] = useState<UIMessage[]>([])
-  const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
   const [user, setUser] = useState<CognitoUser | null>(null)
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+  const [sidebarConversations, setSidebarConversations] = useState<DBConversation[]>([]);
+  const [isLoadingInitialState, setIsLoadingInitialState] = useState(true);
   const router = useRouter()
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  
-  // Using crypto.randomUUID for IDs as in DB service
-  const generateId = () => crypto.randomUUID()
-  
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
-  
+
+  const fetchAndUpdateSidebarConversations = useCallback(async (userIdToFetch: string) => {
+    try {
+      const fetchedConversations = await chatHistoryDBService.getAllConversations(userIdToFetch);
+      setSidebarConversations(fetchedConversations);
+      return fetchedConversations;
+    } catch (error) {
+      console.error("Failed to fetch sidebar conversations:", error);
+      setSidebarConversations([]);
+      return [];
+    }
+  }, []);
+
   useEffect(() => {
-    const initializeChat = async () => {
+    const initializeUserAndConversation = async () => {
+      setIsLoadingInitialState(true);
       try {
         const cognitoUser = getCurrentUser()
-        if (!cognitoUser || !cognitoUser.getUsername()) { // Check for username existence
+        if (!cognitoUser || !cognitoUser.getUsername()) {
           router.push('/login')
           return
         }
         setUser(cognitoUser)
-        const userId = cognitoUser.getUsername() // Use username as userId for now
+        const userId = cognitoUser.getUsername()
 
-        let activeConversation: DBConversation | null = null
-        const userConversations = await chatHistoryDBService.getAllConversations(userId)
+        const userConversations = await fetchAndUpdateSidebarConversations(userId);
 
         if (userConversations.length > 0) {
-          // Assuming getAllConversations sorts by lastMessageTimestamp descending, so the first is the most recent.
-          activeConversation = userConversations[0]
+          setCurrentConversationId(userConversations[0].conversationId) 
         } else {
-          // Create a new conversation if none exist
-          activeConversation = await chatHistoryDBService.createConversation({
-            userId,
-            title: 'New Conversation', // Default title
-          })
+          await handleCreateNewConversation(userId); 
         }
-
-        if (activeConversation) {
-          setCurrentConversationId(activeConversation.conversationId)
-          const dbMessages = await chatHistoryDBService.getMessagesForConversation(activeConversation.conversationId)
-          const uiMessages: UIMessage[] = dbMessages.map(m => ({ ...m, id: m.messageId }))
-          
-          if (uiMessages.length === 0 && activeConversation.conversationId) {
-            // If it's a truly new or empty conversation, add a welcome message to DB and UI
-            const welcomeContent = 'Hello! How can I help you today?'
-            const welcomeDbMsg = await chatHistoryDBService.addMessage({
-              conversationId: activeConversation.conversationId,
-              role: 'assistant',
-              content: welcomeContent,
-            })
-            setMessages([{ ...welcomeDbMsg, id: welcomeDbMsg.messageId }])
-          } else {
-            setMessages(uiMessages)
-          }
-        } else {
-          // Fallback: if no conversation could be loaded or created, show a generic welcome or error.
-          setMessages([
-            {
-              id: generateId(),
-              role: 'assistant',
-              content: 'Welcome! Ready to chat.',
-              timestamp: Date.now(),
-              conversationId: 'fallback', // Temporary, as no real conversationId
-            }
-          ])
-        }
-
       } catch (error) {
         console.error('Auth check or chat initialization failed:', error)
-        // Keep previous behavior of redirecting if auth specifically fails
-        // For other init errors, we might want to show an error in chat UI
-        if (error instanceof Error && error.message.includes('No current user')) { // Example check
+        if (error instanceof Error && error.message.includes('No current user')) {
           router.push('/login')
-        } else {
-          setMessages([
-            {
-              id: generateId(),
-              role: 'assistant',
-              content: 'Could not initialize chat. Please refresh.',
-              timestamp: Date.now(),
-              conversationId: 'error',
-            }
-          ])
-        }
+        } 
+      } finally {
+        setIsLoadingInitialState(false);
       }
     }
-    
-    initializeChat()
-  }, [router])
-  
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
-  
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    const currentInput = input.trim()
-    if (!currentInput || loading || !currentConversationId || !user) return
+    initializeUserAndConversation()
+  }, [router, fetchAndUpdateSidebarConversations]);
 
-    const userId = user.getUsername()
-
-    const userUIMessage: UIMessage = {
-      id: generateId(), // UI key, messageId will be generated by DB service
-      role: 'user',
-      content: currentInput,
-      timestamp: Date.now(),
-      conversationId: currentConversationId,
-    }
-    setMessages(prev => [...prev, userUIMessage])
-    setInput('')
-    setLoading(true)
-
-    try {
-      // Prepare history for API call *before* adding the new user message
-      // Fetch up to, say, 9 previous messages to make space for the current prompt (or adjust limit as needed)
-      // The backend AIProvider will add the current prompt to this history.
-      const historyForAPI = (await chatHistoryDBService.getMessagesForConversation(currentConversationId, 9)) // Fetch 9 to keep total context around 10 with current
-        .map(m => ({ role: m.role, content: m.content, id: m.messageId, timestamp: m.timestamp }))
-
-      // Save user message to DB *after* fetching history for the API
-      const userDbMessage = await chatHistoryDBService.addMessage({
-        conversationId: currentConversationId,
-        role: 'user',
-        content: currentInput,
-      })
-      // Optional: Update messages array with ID from DB if needed, though optimistic usually fine.
-      // setMessages(prev => prev.map(m => m.id === userUIMessage.id ? { ...userDbMessage, id: userDbMessage.messageId } : m));
-
-      const request: ApiChatRequest = {
-        prompt: currentInput,
-        history: historyForAPI as any, // Cast if types don't perfectly match api-service.Message
-        conversationId: currentConversationId, // Pass conversationId to API
-      }
-      
-      console.log('[DEBUG] Frontend - Sending to API:', JSON.stringify(request, null, 2)); // DEBUG LOG
-      const response = await sendChatMessage(request)
-      
-      // Save AI response to DB
-      const aiDbMessage = await chatHistoryDBService.addMessage({
-        conversationId: currentConversationId,
-        role: 'assistant',
-        content: response.text, 
-      })
-      const aiUIMessage: UIMessage = { ...aiDbMessage, id: aiDbMessage.messageId }
-      setMessages(prev => [...prev, aiUIMessage])
-
-    } catch (error) {
-      console.error('Error sending message:', error)
-      const errorContent = error instanceof Error && error.message ? error.message : 'Sorry, I encountered an error. Please try again.'
-      const errorDbMsg = await chatHistoryDBService.addMessage({
-        conversationId: currentConversationId, // Log error to current conversation
-        role: 'assistant',
-        content: errorContent,
-        status: 'failed',
-      })
-      setMessages(prev => [...prev, { ...errorDbMsg, id: errorDbMsg.messageId }])
-    } finally {
-      setLoading(false)
-    }
+  const handleSelectConversation = (conversationId: string) => {
+    setCurrentConversationId(conversationId)
   }
-  
+
+  const handleCreateNewConversation = useCallback(async (userIdOverride?: string): Promise<string | null> => {
+    const currentUserId = userIdOverride || user?.getUsername();
+    if (!currentUserId) {
+      console.error("User not available to create new conversation");
+      return null;
+    }
+    try {
+      const newConversation = await chatHistoryDBService.createConversation({
+        userId: currentUserId,
+        title: 'New Conversation',
+      });
+      if (newConversation) {
+        const welcomeContent = 'Hello! How can I help you today?';
+        await chatHistoryDBService.addMessage({
+            conversationId: newConversation.conversationId,
+            role: 'assistant',
+            content: welcomeContent,
+        });
+        setCurrentConversationId(newConversation.conversationId);
+        await fetchAndUpdateSidebarConversations(currentUserId);
+        return newConversation.conversationId;
+      }
+      return null;
+    } catch (error) {
+      console.error("Failed to create new conversation:", error);
+      return null;
+    }
+  }, [user, fetchAndUpdateSidebarConversations]);
+
+  const handleDeleteConversation = useCallback(async (conversationIdToDelete: string) => {
+    if (!user || !user.getUsername()) {
+      console.error("User not available to delete conversation");
+      return;
+    }
+    const userId = user.getUsername();
+    try {
+      await chatHistoryDBService.deleteConversation(conversationIdToDelete);
+      const remainingConversations = await fetchAndUpdateSidebarConversations(userId);
+
+      if (currentConversationId === conversationIdToDelete) {
+        if (remainingConversations.length > 0) {
+          setCurrentConversationId(remainingConversations[0].conversationId); 
+        } else {
+          setCurrentConversationId(null); 
+        }
+      } 
+    } catch (error) {
+      console.error(`Failed to delete conversation ${conversationIdToDelete}:`, error);
+    }
+  }, [user, currentConversationId, fetchAndUpdateSidebarConversations]);
+
+  const handleConversationTitleUpdated = useCallback((updatedConversationId: string) => {
+    if (user && user.getUsername()) {
+      fetchAndUpdateSidebarConversations(user.getUsername());
+    }
+  }, [user, fetchAndUpdateSidebarConversations]);
+
   const handleLogout = () => {
     signOut()
     router.push('/login')
   }
-  
+
+  if (isLoadingInitialState) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen">
+        <Logo size="large" />
+        <p className="mt-4 text-lg text-muted-foreground">Loading your conversations...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-background">
-      {/* Header */}
-      <header className="flex items-center justify-between p-4 border-b">
+      <header className="flex items-center justify-between p-4 border-b shrink-0">
         <Logo size="small" />
         <div className="flex items-center gap-4">
           {user && (
@@ -200,43 +149,24 @@ export default function ChatPage() {
           </Button>
         </div>
       </header>
-      
-      {/* Chat area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        {messages.map(message => (
-          <div 
-            key={message.id} // Using UIMessage.id as key
-            className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div 
-              className={`max-w-[80%] rounded-lg p-3 ${
-                message.role === 'user' 
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted'
-              }`}
-            >
-              {message.content}
-            </div>
-          </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-      
-      {/* Input area */}
-      <form onSubmit={handleSubmit} className="border-t p-4">
-        <div className="flex gap-2">
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your message..."
-            disabled={loading || !currentConversationId} // Disable if no active conversation
-            className="flex-1"
+      <div className="flex flex-1 overflow-hidden">
+        <div className="w-1/4 min-w-[250px] max-w-[350px] h-full">
+          <ChatSidebar 
+            conversations={sidebarConversations}
+            currentConversationId={currentConversationId}
+            onSelectConversation={handleSelectConversation}
+            onCreateNewConversation={() => handleCreateNewConversation()} 
+            onDeleteConversation={handleDeleteConversation} 
           />
-          <Button type="submit" disabled={loading || !currentConversationId}>
-            {loading ? 'Sending...' : 'Send'}
-          </Button>
         </div>
-      </form>
+        <div className="flex-1 h-full">
+          <ChatView 
+            currentConversationId={currentConversationId} 
+            user={user}
+            onTitleUpdated={handleConversationTitleUpdated}
+          />
+        </div>
+      </div>
     </div>
   )
 } 
